@@ -32,6 +32,11 @@
 @media(max-width:680px){.mode-switch{width:100%;justify-content:center}.heading .toolbar{width:100%}}
 .live-layout{grid-template-columns:minmax(0,1fr) minmax(268px,.4fr);align-items:start}
 .kline-wrap{position:relative;height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.kline-wrap.compact{height:320px}
+.kline-empty{position:absolute;inset:0;display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;color:var(--muted);font-size:12px;background:#fff;text-align:center;padding:0 16px}
+.kline-empty b{font-size:13px;color:#526078;font-weight:600}
+.dash-kline-meta{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:8px}
+.dash-kline-meta b{font-size:16px;color:var(--ink);letter-spacing:-.3px}
 .kline-canvas{position:absolute;inset:0}
 .marker-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .tr-badge{position:absolute;font-size:11px;font-weight:700;line-height:1;padding:5px 7px;border-radius:5px;white-space:nowrap;box-shadow:0 2px 6px #1b2d4b26}
@@ -86,5 +91,5 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function loadTrades(){try{const r=await fetch('/api/trading/trades');const data=await r.json();if(!r.ok)throw Error(data.error||'无法读取交易账本');tradeData=data;document.getElementById('tradeCount').textContent=`${tradeData.length} 笔 · 服务端账本`;renderTrades();}catch(e){document.getElementById('tradeCount').textContent='服务未连接';document.getElementById('tradeRows').innerHTML=`<tr><td colspan="9" class="empty">${esc(e.message)}。请启动本地服务。</td></tr>`;}}
 function renderTrades(){const f=document.getElementById('tradeFilter').value;const rows=tradeData.filter(t=>f==='all'||(f==='long'&&['long','做多'].includes(t.side))||(f==='short'&&['short','做空'].includes(t.side)));document.getElementById('tradeRows').innerHTML=rows.length?rows.map(t=>`<tr><td class="muted">${esc(t.id)}</td><td class="symbol">${esc(t.symbol||'—')}</td><td>${esc(['long','做多'].includes(t.side)?'做多':'做空')}</td><td>${esc(t.entryTime||'—')} / ${money(t.entryPrice)}</td><td>${esc(t.exitTime||'—')} / ${money(t.exitPrice)}</td><td>${esc(t.qty)}</td><td>${money(t.fees)}</td><td class="${t.netPnl>=0?'positive':'negative'}">${money(t.netPnl)}</td><td>${esc(t.entryReason||'—')} / ${esc(t.exitReason||'持仓中')}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">暂无符合条件的模拟成交</td></tr>';}
 document.getElementById('tradeFilter').addEventListener('change',renderTrades);document.getElementById('exportBtn').addEventListener('click',()=>{const rows=[['ID','品种','方向','开仓时间','开仓价','平仓时间','平仓价','手数','费用','净盈亏','入场原因','退出原因'],...tradeData.map(t=>[t.id,t.symbol,t.side,t.entryTime,t.entryPrice,t.exitTime,t.exitPrice,t.qty,t.fees,t.netPnl,t.entryReason,t.exitReason])];const csv='\ufeff'+rows.map(r=>r.map(x=>'"'+String(x??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='paper-trades.csv';a.click();URL.revokeObjectURL(a.href)});loadTrades();
-</script><script src="vendor/klinecharts.min.js"></script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/live.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
+</script><script src="vendor/klinecharts.min.js"></script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/kline-core.js"></script><script src="js/live.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
 </body></html>

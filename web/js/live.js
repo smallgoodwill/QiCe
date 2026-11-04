@@ -63,58 +63,29 @@
   }
 
   // ---- 图表 ------------------------------------------------------------
+  // 绘图交给 web/js/kline-core.js（仪表盘组件共用同一份），这里只保留页面逻辑
+  let view = null;
+
   function ensureChart() {
     const holder = $('kline');
     if (!holder) return null;
-    if (chart) { chart.resize(); return chart; }
+    if (view) { view.resize(); return view.chart; }
     if (typeof klinecharts === 'undefined') { $('liveMsg').textContent = '图表库未加载'; return null; }
-    if (!holder.offsetWidth) return null;           // 页面还没显示，等切换过来再初始化
-    chart = klinecharts.init(holder, {locale: 'zh-CN', timezone: 'Asia/Shanghai'});
-    // 国内习惯：涨红跌绿
-    chart.setStyles({
-      grid: {show: true, horizontal: {color: '#eef1f6'}, vertical: {color: '#f3f5f9'}},
-      candle: {
-        bar: {upColor: '#e06465', downColor: '#139875', noChangeColor: '#748198',
-              upBorderColor: '#e06465', downBorderColor: '#139875',
-              upWickColor: '#e06465', downWickColor: '#139875'},
-        priceMark: {last: {upColor: '#e06465', downColor: '#139875', noChangeColor: '#748198'}}
-      },
-      xAxis: {axisLine: {color: '#e7ebf2'}, tickText: {color: '#8b96a8'}},
-      yAxis: {axisLine: {color: '#e7ebf2'}, tickText: {color: '#8b96a8'}}
-    });
-    chart.createIndicator('MA', false, {id: 'candle_pane'});
-    chart.createIndicator('VOL');
-    ['onVisibleRangeChange', 'onZoom', 'onScroll'].forEach(action => {
-      chart.subscribeAction(action, () => scheduleMarkers());
-    });
+    view = window.qiceKline.create(holder, {onViewChange: () => scheduleMarkers()});
+    if (!view) return null;                         // 页面还没显示，等切换过来再初始化
+    chart = view.chart;
     return chart;
-  }
-
-  const toChartBar = b => ({timestamp: Date.parse(b.timestamp), open: +b.open, high: +b.high,
-                            low: +b.low, close: +b.close, volume: +(b.volume || 0)});
-
-  function normalizeBars(bars) {
-    // 图表要求时间严格递增：按时间升序、同一时间戳只保留最后一条。
-    // 服务端已按数据源隔离并排序，这里再兜一层，防止任何来源把坐标轴顶歪。
-    const byTs = new Map();
-    bars.forEach(b => {
-      const ts = Date.parse(b.timestamp);
-      if (!Number.isFinite(ts)) return;
-      byTs.set(ts, Object.assign({}, b, {timestamp: b.timestamp}));
-    });
-    return [...byTs.keys()].sort((a, b) => a - b).map(k => byTs.get(k));
   }
 
   function applyBars(bars) {
     const c = ensureChart();
-    if (!c || !bars || !bars.length) return;
-    const clean = normalizeBars(bars);
+    if (!c || !view || !bars || !bars.length) return;
+    const clean = view.apply(bars);
     if (!clean.length) return;
     if (clean.length >= 5) {                  // 攒够历史了，撤掉"正在累积"的提示
       const notice = $('liveNotice');
       if (notice) delete notice.dataset.thin;
     }
-    c.applyNewData(clean.map(toChartBar));
     scheduleMarkers();
     updateQuote(clean[clean.length - 1]);
   }
@@ -124,16 +95,8 @@
     updateQuote(bar);
     if (period !== '1m') return;              // 多分钟周期用轮询刷新，不在前端重复实现聚合
     const c = ensureChart();
-    if (!c) return;
-    const next = toChartBar(bar);
-    if (!Number.isFinite(next.timestamp)) return;
-    const list = (c.getDataList && c.getDataList()) || [];
-    const last = list.length ? Number(list[list.length - 1].timestamp) : null;
-    if (last != null && next.timestamp < last) {   // 迟到的旧 bar：丢弃并重算标记，不回插
-      scheduleMarkers();
-      return;
-    }
-    c.updateData(next);
+    if (!c || !view) return;
+    view.update(bar);                         // 内核会丢弃迟到/乱序的 bar
     scheduleMarkers();
   }
 
