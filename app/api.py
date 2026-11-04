@@ -227,11 +227,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/trading/runs":
             return 201, self._create_run(self._read_json())
         if path.startswith("/api/trading/runs/"):
+            # 形如 /api/trading/runs/<runId>/<action>，共 5 段
             parts = [segment for segment in path.strip("/").split("/") if segment]
-            if len(parts) != 4 or parts[3] not in ("step", "cancel", "pause", "resume"):
+            if len(parts) != 5 or parts[4] not in ("step", "cancel", "pause", "resume"):
                 raise ApiError(404, "未知交易操作。")
             self._read_json()          # 统一要求 JSON 空对象，挡住跨站简单请求
-            return 200, self._mutate_run(parts[2], parts[3])
+            return 200, self._mutate_run(parts[3], parts[4])
         raise ApiError(404, "未知 API 路径。")
 
     def _route_delete(self, path: str) -> tuple[int, object]:

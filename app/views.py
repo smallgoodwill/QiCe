@@ -45,7 +45,10 @@ def diagnostics() -> dict:
     latest = db.latest_state()
     if not latest:
         return {"available": False, "message": "尚无模拟盘记录。启动一段行情回放后生成诊断。"}
-    state, total = latest
+    summary_state, total = latest
+    # latest_state() 只读 state_json（轻量列表用），不含行情；
+    # 诊断要看 bars，必须按 runId 回表取 market_data_json。
+    state = db.get_trading_run(summary_state.get("runId", "")) or summary_state
     bars = state.get("bars") or []
     trades = state.get("trades") or []
     if not bars:

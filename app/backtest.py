@@ -35,11 +35,14 @@ def run_backtest(payload: dict) -> dict:
         session.advance()
 
     base_close = bars[0]["close"] or 1.0
-    curve = []
+    # 切分点会先后产生两个同索引权益点（force_close 记一次、advance 记一次），
+    # 这里按索引去重并保留后一个，否则图表会在该处出现垂直断点、统计也会重复计入。
+    by_index: dict[int, float] = {}
     for point in session.equity_curve:
-        idx = point["i"]
-        curve.append({"i": idx, "equity": point["equity"],
-                      "benchmark": round(cfg["capital"] * bars[idx]["close"] / base_close, 2)})
+        by_index[point["i"]] = point["equity"]
+    curve = [{"i": idx, "equity": equity,
+              "benchmark": round(cfg["capital"] * bars[idx]["close"] / base_close, 2)}
+             for idx, equity in sorted(by_index.items())]
 
     trades = []
     for trade in session.trades:
