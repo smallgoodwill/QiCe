@@ -191,7 +191,9 @@ class FeedHub:
         with self.lock:
             symbol = (symbol or self.symbol or "").strip() or self.symbol
             agg = self.aggs.get(symbol)
-            raw = agg.snapshot(limit * minutes + 2) if agg else db.recent_live_bars(symbol, limit * minutes + 2)
+            driver = self.driver
+            raw = agg.snapshot(limit * minutes + 2) if agg else db.recent_live_bars(
+                symbol, limit * minutes + 2, source=driver)
         if not raw:
             return []
         return (raw if minutes == 1 else _resample(raw, minutes))[-limit:]
@@ -296,8 +298,9 @@ class FeedHub:
             raise ValueError("请先连接 SimNow 柜台：连接成功后才能订阅 CTP 行情。")
         aggregator = Aggregator(symbol)
         try:
-            # 重启服务后接着上次的 K 线画，避免图上只有刚启动的一两根
-            aggregator.seed(db.recent_live_bars(symbol, 600))
+            # 重启服务后接着上次的 K 线画，避免图上只有刚启动的一两根。
+            # 只取真实柜台写入的 bar：模拟源生成的 bar 时间戳会跑到"未来"，混进来会顶歪坐标轴。
+            aggregator.seed(db.recent_live_bars(symbol, 600, source="ctp"))
         except Exception:
             logger.exception("读取历史实时 bar 失败：%s", symbol)
         with self.lock:
@@ -353,10 +356,10 @@ class FeedHub:
         # 只停采集，不主动断开 CTP 连接：用户可能还要继续看 SimNow 的柜台状态
         self.message = "已停止" if was_running else self.message
 
-    @staticmethod
-    def _persist(symbol: str, bar: dict) -> None:
+    def _persist(self, symbol: str, bar: dict) -> None:
+        """按当前驱动打标记再落库：sim 生成的 bar 绝不能伪装成真实行情。"""
         try:
-            db.save_live_bar(symbol, bar)
+            db.save_live_bar(symbol, bar, source=self.driver or "unknown")
         except Exception:                    # 落库失败不能打断采集
             logger.exception("实时 bar 写入失败：%s %s", symbol, bar.get("timestamp"))
 

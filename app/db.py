@@ -19,7 +19,7 @@ from typing import Any
 
 from . import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _now() -> str:
@@ -78,6 +78,7 @@ def initialize() -> None:
                 low REAL NOT NULL,
                 close REAL NOT NULL,
                 volume REAL NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'ctp',
                 PRIMARY KEY (symbol, ts)
             );
         """)
@@ -90,9 +91,19 @@ def initialize() -> None:
 
 
 def _migrate(conn: sqlite3.Connection, from_version: int) -> None:
-    """增量迁移。v2 → v3：移除废弃的单例模拟盘表（已被 trading_runs 取代）。"""
+    """增量迁移。
+
+    v2 → v3：移除废弃的单例模拟盘表（已被 trading_runs 取代）。
+    v3 → v4：live_bars 增加 source 列。加列前已存在的行无法判断来自真实柜台
+             还是内置模拟源（两者混在同一张表里，时间戳会互相穿插），因此统一
+             标为 legacy 并排除在查询之外——宁可少画几根，不能把模拟数据当真实行情。
+    """
     if from_version < 3:
         conn.execute("DROP TABLE IF EXISTS paper_state")
+    if from_version < 4:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(live_bars)")}
+        if "source" not in columns:
+            conn.execute("ALTER TABLE live_bars ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'")
 
 
 # --------------------------------------------------------------------------
@@ -241,20 +252,31 @@ def stats() -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # 实时行情 K 线（只存已收口的 bar，未收口的那根由内存聚合器维护）
 # --------------------------------------------------------------------------
-def save_live_bar(symbol: str, bar: dict) -> None:
+def save_live_bar(symbol: str, bar: dict, source: str = "ctp") -> None:
     with _connect() as conn:
-        conn.execute("""INSERT INTO live_bars(symbol,ts,open,high,low,close,volume)
-            VALUES(?,?,?,?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET
+        conn.execute("""INSERT INTO live_bars(symbol,ts,open,high,low,close,volume,source)
+            VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET
             open=excluded.open,high=excluded.high,low=excluded.low,
-            close=excluded.close,volume=excluded.volume""",
+            close=excluded.close,volume=excluded.volume,source=excluded.source""",
             (symbol, bar["timestamp"], float(bar["open"]), float(bar["high"]),
-             float(bar["low"]), float(bar["close"]), float(bar.get("volume") or 0)))
+             float(bar["low"]), float(bar["close"]), float(bar.get("volume") or 0), source))
 
 
-def recent_live_bars(symbol: str, limit: int = 500) -> list[dict]:
+def recent_live_bars(symbol: str, limit: int = 500, source: str | None = "ctp") -> list[dict]:
+    """取最近的已收口 bar。
+
+    source 为 None 时不过滤（仅用于排查），默认只取真实柜台行情，
+    避免内置模拟源生成的 bar 与真行情混在一张图上。
+    """
+    sql = "SELECT ts,open,high,low,close,volume FROM live_bars WHERE symbol=?"
+    params: list[Any] = [symbol]
+    if source:
+        sql += " AND source=?"
+        params.append(source)
+    sql += " ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
     with _connect() as conn:
-        rows = conn.execute("""SELECT ts,open,high,low,close,volume FROM live_bars
-            WHERE symbol=? ORDER BY ts DESC LIMIT ?""", (symbol, limit)).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [{"timestamp": row["ts"], "open": row["open"], "high": row["high"],
              "low": row["low"], "close": row["close"], "volume": row["volume"]}
             for row in reversed(rows)]

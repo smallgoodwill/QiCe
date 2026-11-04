@@ -22,6 +22,7 @@ import http.client
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ CONFIG = {
 
 results: list[tuple[bool, str, str]] = []
 PORT = 0
+DATA_DIR = ""            # 临时服务的数据目录；--external 模式下为空，跳过 DB 层断言
 
 
 # --------------------------------------------------------------------------
@@ -364,6 +366,20 @@ def check_live_feed() -> None:
     status, body = call("POST", "/api/live/stop", {})
     check("POST /api/live/stop 停止采集", status == 200 and body.get("running") is False)
 
+    # 数据源隔离：模拟源写下的 bar 必须带 source='sim'，不能被当作真实行情读出。
+    # （曾出现模拟源 30× 加速把 bar 时间推到"未来"，与 CTP 真行情混在一张图上顶歪坐标轴）
+    db_path = os.path.join(DATA_DIR, "qice.sqlite3") if DATA_DIR else ""
+    if db_path and os.path.exists(db_path):
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                "SELECT source, COUNT(*) FROM live_bars WHERE symbol='IF9999' GROUP BY source"
+            ).fetchall()
+        sources = dict(rows)
+        check("模拟源写入的 bar 标记为 source=sim", sources.get("sim", 0) > 0, str(sources))
+        check("模拟 bar 不会被当作 CTP 真实行情返回", sources.get("ctp", 0) == 0, str(sources))
+    else:
+        print("  ~ 跳过数据源标记断言（--external 模式拿不到临时数据目录）")
+
     status, _ = call("POST", "/api/live/start", {"driver": "ctp", "symbol": "IF9999"})
     check("未连接柜台时拒绝启动 CTP 行情", status == 400, f"status={status}")
 
@@ -407,7 +423,7 @@ def check_security() -> None:
 
 
 def main() -> int:
-    global PORT
+    global PORT, DATA_DIR
     parser = argparse.ArgumentParser(description="期策 · 全链路自检")
     parser.add_argument("--external", help="只测已在运行的服务，例如 http://127.0.0.1:8765")
     parser.add_argument("--keep", action="store_true", help="保留临时数据目录以便排查")
@@ -426,6 +442,7 @@ def main() -> int:
 
         PORT = free_port()
         tmpdir = tempfile.mkdtemp(prefix="qice-smoke-")
+        DATA_DIR = tmpdir
         env = {**os.environ, "QICE_DATA_DIR": tmpdir,
                "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         print(f"\n\033[1m启动临时服务\033[0m  port={PORT}  数据目录={tmpdir}")

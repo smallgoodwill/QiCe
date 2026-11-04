@@ -93,12 +93,30 @@
   const toChartBar = b => ({timestamp: Date.parse(b.timestamp), open: +b.open, high: +b.high,
                             low: +b.low, close: +b.close, volume: +(b.volume || 0)});
 
+  function normalizeBars(bars) {
+    // 图表要求时间严格递增：按时间升序、同一时间戳只保留最后一条。
+    // 服务端已按数据源隔离并排序，这里再兜一层，防止任何来源把坐标轴顶歪。
+    const byTs = new Map();
+    bars.forEach(b => {
+      const ts = Date.parse(b.timestamp);
+      if (!Number.isFinite(ts)) return;
+      byTs.set(ts, Object.assign({}, b, {timestamp: b.timestamp}));
+    });
+    return [...byTs.keys()].sort((a, b) => a - b).map(k => byTs.get(k));
+  }
+
   function applyBars(bars) {
     const c = ensureChart();
     if (!c || !bars || !bars.length) return;
-    c.applyNewData(bars.map(toChartBar));
+    const clean = normalizeBars(bars);
+    if (!clean.length) return;
+    if (clean.length >= 5) {                  // 攒够历史了，撤掉"正在累积"的提示
+      const notice = $('liveNotice');
+      if (notice) delete notice.dataset.thin;
+    }
+    c.applyNewData(clean.map(toChartBar));
     scheduleMarkers();
-    updateQuote(bars[bars.length - 1]);
+    updateQuote(clean[clean.length - 1]);
   }
 
   function onBar(bar) {
@@ -107,7 +125,15 @@
     if (period !== '1m') return;              // 多分钟周期用轮询刷新，不在前端重复实现聚合
     const c = ensureChart();
     if (!c) return;
-    c.updateData(toChartBar(bar));
+    const next = toChartBar(bar);
+    if (!Number.isFinite(next.timestamp)) return;
+    const list = (c.getDataList && c.getDataList()) || [];
+    const last = list.length ? Number(list[list.length - 1].timestamp) : null;
+    if (last != null && next.timestamp < last) {   // 迟到的旧 bar：丢弃并重算标记，不回插
+      scheduleMarkers();
+      return;
+    }
+    c.updateData(next);
     scheduleMarkers();
   }
 
@@ -239,7 +265,9 @@
     stream.addEventListener('hello', event => {
       const data = JSON.parse(event.data);
       applyStatus(data.status);
-      if (data.bars && data.bars.length) applyBars(data.bars);
+      const bars = data.bars || [];
+      if (bars.length) applyBars(bars);
+      if (bars.length < 5) hintThinHistory();
     });
     stream.addEventListener('bar', event => {
       const data = JSON.parse(event.data);
@@ -247,6 +275,16 @@
       onBar(data.bar);
     });
     stream.onerror = () => setState('连接中断，浏览器会自动重连', 'amber');
+  }
+
+  // 真实行情只有接入之后的数据（历史不回溯），刚启动时图上只有一两根，需要说清楚
+  function hintThinHistory() {
+    const box = $('liveNotice');
+    if (!box) return;
+    box.dataset.thin = '1';
+    box.innerHTML = `<span>ⓘ</span><div><strong>正在从当前时刻开始累积</strong>：CTP 只推实时 tick，`
+      + `不会回溯历史 K 线，所以图上先只有接入后的几根，此后每分钟新增 1 根。`
+      + `想立刻看到完整形态，可点下方「启动内置模拟源」（模拟数据，仅供看效果）。</div>`;
   }
 
   function applyStatus(status) {
@@ -268,6 +306,7 @@
       notice.innerHTML = `<span>ⓘ</span><div>这是<strong>只读行情</strong>：不发送任何委托、不改动模拟盘账本。点「连接 SimNow 实时行情」用 CTP 真实数据，或「启动内置模拟源」直接看效果。`
         + (ctp.credentialsConfigured ? '' : '　（.env 里 SimNow 账号还没填全，CTP 不可用）') + `</div>`;
     }
+    if (driver === 'ctp' && notice.dataset.thin === '1') hintThinHistory();   // 状态轮询会重写提示，补回去
   }
 
   async function loadBars() {
