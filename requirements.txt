@@ -1,0 +1,6 @@
+# 运行期唯一必需依赖：读取 .env（其余全部使用 Python 标准库）
+python-dotenv>=1.0
+
+# 可选：SimNow/CTP 实时行情网关见 requirements-ctp.txt
+# 旧版本里的 numpy / pandas / ta-lib / loguru / tzlocal 实际未被代码引用，
+# 已移除以免误以为平台依赖这些重包。

@@ -1,0 +1,5 @@
+# 可选：SimNow / CTP 行情网关。仅 Windows x64 + Python 3.13 有官方 wheel。
+# 不需要实时行情时可以完全不装，平台其余功能（回测、模拟盘、问答）照常可用。
+# 安装： .\scripts\install.ps1 -WithCtp
+vnpy==4.5.0
+vnpy_ctp==6.7.11.4
