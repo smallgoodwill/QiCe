@@ -4,34 +4,59 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const cash=v=>v==null?'—':(v<0?'−':'')+'¥ '+Math.abs(+v||0).toLocaleString('zh-CN',{maximumFractionDigits:2});
   const statusLabel={running:'运行中',completed:'已完成',stopped:'已取消',paused:'已暂停'};
-  mount.innerHTML=`<div class="heading"><div><h1>策略交易</h1><p>历史行情回放与 SimNow 模拟账户分开管理；使用 CTP 网关（CTP），不是 CTPTEST。</p></div><div class="toolbar"><span class="tag amber" id="tradingApiState">连接服务中</span><span class="tag amber">SimNow 仿真账号</span></div></div>
-  <div class="risk-banner"><span>ⓘ</span><div>连接 SimNow 仿真账号。CTP API 使用“实盘”协议模式以兼容 SimNow 普通仿真前置；这不改变账号类型。当前页面不会发送订单。推荐把凭据填入项目根目录的 .env；该文件是明文，仅限本机使用，已加入 Git 忽略。</div></div>
-  <div class="card" style="margin-bottom:16px"><div class="card-head"><h2>SimNow 实时行情连接</h2><span class="tag" id="simnowStatus">未连接</span></div>
-  <div class="note" style="margin:0 0 14px">请从 SimNow 控制台复制普通仿真环境参数，推荐填在项目根目录的 .env 并重启服务。网关固定为 CTP，协议模式固定为“实盘”；此处“实盘”指 CTP API 握手模式，不代表真实账户。也可临时填下面表单；表单中的账号/密码只用于本次连接，不写入文件。请复制完整前置地址及协议（tcp:// 或 ssl://）。本页面用于连接与行情验证。</div>
-  <div class="form-grid"><div class="field"><label>模拟账号</label><input type="text" id="simUsername" autocomplete="off" placeholder="SimNow 账号"></div><div class="field"><label>模拟密码</label><input type="password" id="simPassword" autocomplete="new-password" placeholder="只在连接时使用"></div>
-  <div class="field"><label>经纪商代码</label><input type="text" id="simBroker" placeholder="按控制台填写"></div><div class="field"><label>行情前置地址</label><input type="text" id="simMd" placeholder="tcp://... 或 ssl://..."></div>
-  <div class="field"><label>交易前置地址</label><input type="text" id="simTd" placeholder="tcp://... 或 ssl://..."><small>CTP 必须同时提供行情前置与交易前置</small></div>
-  <div class="field"><label>AppID（CTP“产品名称”，如控制台提供）</label><input type="text" id="simAppId" placeholder="可按控制台要求填写"></div><div class="field"><label>授权码（如控制台提供）</label><input type="password" id="simAuth" autocomplete="new-password" placeholder="可按控制台要求填写"></div>
-  <div class="field"><label>产品信息（如控制台提供）</label><input type="text" id="simProductInfo" placeholder="可选"></div></div>
-  <div class="toolbar paper-controls"><button class="btn primary" id="simConnect">连接测试柜台</button><button class="btn" id="simDisconnect" disabled>断开</button><span class="metric-tip" id="simnowMessage">尚未连接</span></div>
-  <div class="section-title">订阅合约行情</div><div class="form-grid"><div class="field"><label>合约代码</label><input type="text" id="simSymbol" placeholder="例如控制台合约列表中的代码"></div><div class="field"><label>交易所代码</label><select id="simExchange" class="select"><option value="SHFE">SHFE 上期所</option><option value="DCE">DCE 大商所</option><option value="CZCE">CZCE 郑商所</option><option value="CFFEX">CFFEX 中金所</option><option value="INE">INE 能源中心</option><option value="GFEX">GFEX 广期所</option></select></div></div>
-  <div class="toolbar" style="margin-top:10px"><button class="btn" id="simSubscribe" disabled>订阅行情</button><span class="sub" id="simQuote">暂无行情</span></div></div>
-  <div class="risk-banner"><span>ⓘ</span><div>下方 CSV 功能仍为历史行情回放，与 SimNow 实时行情订阅相互独立。实时策略运行、委托发送和成交对账尚未启用；当前不会发送任何订单。</div></div>
+
+  // 交易模式：paper=历史行情回放，live=实盘（通道未接入，仅展示前置条件）
+  const MODE_KEY='qice.tradeMode';
+  let mode=localStorage.getItem(MODE_KEY)==='live'?'live':'paper';
+
+  const REQUIREMENTS=[
+    ['柜台接入','交易前置/经纪商 API 授权、登录与结算确认，断线自动重连。'],
+    ['委托与回报','下单、撤单、部分成交、拒单与错单处理，回报逐笔落库。'],
+    ['持仓与资金对账','柜台持仓/资金与本地账本定时核对，差异即冻结交易。'],
+    ['风控闸门','单笔风险 ≤ 账户 1%、单日亏损停机、最大持仓与价格偏离校验，前置拦截。'],
+    ['合约规则','交易时段与夜盘、涨跌停、保证金、最小变动价位、换月处理。'],
+    ['审计留痕','每笔委托记录决策依据、参数快照与人工复核结果，可回放追溯。']
+  ];
+
+  mount.innerHTML=`<div class="heading"><div><h1>策略交易</h1><p>模拟盘用历史行情逐 bar 回放；实盘通道尚未接入，当前不会发送任何真实委托。</p></div><div class="toolbar"><span class="tag amber" id="tradingApiState">连接服务中</span><div class="mode-switch" role="tablist" aria-label="交易模式"><button type="button" role="tab" data-mode="paper"><i class="dot"></i>模拟盘</button><button type="button" role="tab" data-mode="live"><i class="dot"></i>实盘</button></div></div></div>
+
+  <div class="mode-panel" id="modePaper">
   <div class="risk-banner"><span>ⓘ</span><div>本页以导入的历史行情逐 bar 回放，不是实时行情。取消运行时如有持仓，会按最后处理 bar 收盘价模拟平仓并记录费用。</div></div>
-  <div class="grid paper-layout"><div class="card"><div class="card-head"><h2>启动策略交易</h2><span class="sub">最多同时运行 10 条策略</span></div>
+  <div class="grid paper-layout"><div class="card"><div class="card-head"><h2>启动模拟交易</h2><span class="sub">最多同时运行 10 条策略</span></div>
   <div class="field"><label>行情 CSV</label><div class="file-drop">选择已授权的历史行情<input id="tradeFile" type="file" accept=".csv,text/csv"><button class="btn" id="tradeSample" type="button" style="margin-top:8px">载入内置样例行情</button><small id="tradeDataLabel">尚未载入行情</small></div></div>
   <div class="field" style="margin-top:12px"><label>策略库</label><select id="tradeStrategy" class="select"><option value="">选择已保存策略…</option></select><div id="tradeStrategyNote" class="metric-tip">策略必须先保存在“我的策略库”。</div></div>
   <div class="form-grid" style="margin-top:12px"><div class="field"><label>单策略初始资金</label><input id="tradeCapital" type="number" value="1000000" min="1" step="10000"></div><div class="field"><label>合约乘数</label><input id="tradeMultiplier" type="number" min="0.01" step="0.1" placeholder="按合约核实"></div><div class="field"><label>每笔手数</label><input id="tradeQty" type="number" value="1" min="1" step="1"></div><div class="field"><label>每边手续费 / 手</label><input id="tradeFee" type="number" min="0" step="0.1" placeholder="按费率核实"></div><div class="field"><label>最小变动价位</label><input id="tradeTick" type="number" min="0.0001" step="0.1" placeholder="按合约核实"></div><div class="field"><label>单边滑点（跳）</label><input id="tradeSlip" type="number" value="1" min="0" step="1"></div><div class="field"><label>单日已实现亏损停开线</label><input id="tradeDailyLoss" type="number" value="1000" min="0" step="100"></div><label class="checkline"><input id="tradeBlackout" type="checkbox" checked> 遵循 CSV 事件禁入标记</label></div>
   <label class="checkline contract-check"><input id="tradeContractChecked" type="checkbox"> 已核对该品种的乘数、手续费和最小变动价位</label><div class="toolbar paper-controls"><button class="btn primary" id="startStrategyTrade">▶　开始模拟交易</button><button class="btn" id="refreshTrading">刷新运行状态</button></div><div id="tradeMessage" class="metric-tip"></div></div>
   <div class="card"><div class="card-head"><h2>策略运行账户</h2><span class="tag" id="runningCount">0 / 10 运行中</span></div><div id="tradingRuns"><div class="empty">正在读取策略运行记录…</div></div><div class="note">每条运行记录独立保存。取消一条策略不会停止其他策略；已完成或已取消的记录仍保留在列表中。</div></div></div>
-  <div class="card" style="margin-top:16px"><div class="card-head"><h2>策略模拟成交</h2><span class="sub">所有运行的模拟账本</span></div><div class="table-scroll"><table class="table"><thead><tr><th>运行 ID</th><th>策略</th><th>品种</th><th>方向</th><th>开仓时间 / 价格</th><th>平仓时间 / 价格</th><th>手数</th><th>费用</th><th>净盈亏</th><th>退出原因</th></tr></thead><tbody id="tradingTrades"><tr><td colspan="10" class="empty">暂无成交</td></tr></tbody></table></div></div>`;
+  <div class="card" style="margin-top:16px"><div class="card-head"><h2>策略模拟成交</h2><span class="sub">所有运行的模拟账本</span></div><div class="table-scroll"><table class="table"><thead><tr><th>运行 ID</th><th>策略</th><th>品种</th><th>方向</th><th>开仓时间 / 价格</th><th>平仓时间 / 价格</th><th>手数</th><th>费用</th><th>净盈亏</th><th>退出原因</th></tr></thead><tbody id="tradingTrades"><tr><td colspan="10" class="empty">暂无成交</td></tr></tbody></table></div></div>
+  </div>
+
+  <div class="mode-panel" id="modeLive">
+  <div class="card"><div class="live-hero"><div class="live-icon">⚠</div><div><h2>实盘通道未接入</h2><p>本版本不连接券商柜台，也不会发送任何真实委托。切到这个页签不影响模拟盘运行；下面列出接入实盘必须先补齐的环节，全部通过前不开放下单。</p></div><span class="tag amber">未接入</span></div>
+  <div class="require-list">${REQUIREMENTS.map((r,i)=>`<div class="require-row"><span class="mark">${i+1}</span><div><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div><span class="st">未就绪</span></div>`).join('')}</div>
+  <div class="toolbar" style="margin-top:16px"><button class="btn primary" id="enableLive" disabled title="接入柜台并通过风控校验后才可启用">启用实盘交易</button><span class="sub" id="liveGate">0 / ${REQUIREMENTS.length} 项就绪 · 实盘开关处于关闭状态</span></div></div>
+  <div class="risk-banner" style="margin-top:16px"><span>⚠</span><div><strong>真实资金风险。</strong>即使后续接入实盘，也请先以小资金或仿真账户验证；单笔风险按账户 1% 上限执行，触发单日亏损停机线后当日不再开新仓。</div></div>
+  </div>`;
 
   let bars=[],strategies=[],runs=[],polling=false,pollTimer=null;
+
   async function api(path,options={}){const response=await fetch(path,options);let body={};try{body=await response.json();}catch{}if(!response.ok)throw Error(body.error||`服务请求失败 (${response.status})`);return body;}
-  async function simStatus(){try{const s=await api('/api/simnow/status');$('simnowStatus').textContent=s.connecting?`连接中（行情${s.marketConnected?'✓':'…'} / 交易${s.tradeConnected?'✓':'…'}）`:s.connected?'行情与交易均已连接':s.available?'未连接':'未安装 CTP 网关';$('simnowStatus').className='tag '+(s.connected?'green':'amber');$('simnowMessage').textContent=s.error||s.lastLog||'尚未连接';$('simDisconnect').disabled=!(s.connected||s.connecting);$('simSubscribe').disabled=!s.connected;if(s.lastTick){$('simQuote').textContent=`${s.lastTick.symbol}　最新 ${s.lastTick.lastPrice??'—'}　买一 ${s.lastTick.bidPrice??'—'}　卖一 ${s.lastTick.askPrice??'—'}　${s.lastTick.datetime||''}`;}if(!s.available&&!s.error)$('simnowMessage').textContent='尚未安装 CTP 网关；查看项目 README 的安装说明。';}catch(e){$('simnowMessage').textContent=e.message;}}
-  $('simConnect').addEventListener('click',async()=>{const val=id=>($(id)?.value||'').trim();const payload={username:val('simUsername'),password:val('simPassword'),brokerId:val('simBroker'),mdAddress:val('simMd'),tdAddress:val('simTd'),appId:val('simAppId'),authCode:val('simAuth'),productInfo:val('simProductInfo')};$('simConnect').disabled=true;try{await api('/api/simnow/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});$('simPassword').value='';$('simAuth').value='';$('simnowMessage').textContent='连接请求已提交；等待柜台回报。';}catch(e){$('simPassword').value='';$('simAuth').value='';$('simnowMessage').textContent=e.message;}finally{$('simConnect').disabled=false;simStatus();}});
-  $('simDisconnect').addEventListener('click',async()=>{try{await api('/api/simnow/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}catch(e){$('simnowMessage').textContent=e.message;}await simStatus();});
-  $('simSubscribe').addEventListener('click',async()=>{try{await api('/api/simnow/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:$('simSymbol').value,exchange:$('simExchange').value})});$('simnowMessage').textContent='已提交行情订阅。';}catch(e){$('simnowMessage').textContent=e.message;}await simStatus();});
+
+  function setMode(next,silent){
+    mode=next==='live'?'live':'paper';
+    localStorage.setItem(MODE_KEY,mode);
+    document.querySelectorAll('.mode-switch button').forEach(b=>{
+      const on=b.dataset.mode===mode;
+      b.classList.toggle('active',on);
+      b.setAttribute('aria-selected',on?'true':'false');
+    });
+    $('modePaper').classList.toggle('active',mode==='paper');
+    $('modeLive').classList.toggle('active',mode==='live');
+    if(mode==='paper'){ensurePolling();}
+    else if(pollTimer){clearInterval(pollTimer);pollTimer=null;}   // 实盘页签不推进模拟盘
+    if(!silent)$('tradeMessage').textContent='';
+  }
+
   function fillStrategies(items){strategies=items||[];const select=$('tradeStrategy'),selected=select.value;select.innerHTML='<option value="">选择已保存策略…</option>'+strategies.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.symbol||'未设品种')}</option>`).join('');if(strategies.some(s=>s.id===selected))select.value=selected;updateStrategyNote();}
   function chosen(){return strategies.find(s=>s.id===$('tradeStrategy').value);}
   function updateStrategyNote(){const s=chosen();$('tradeStrategyNote').textContent=s?`${s.maType}(${s.fast}/${s.slow}) · ATR ${s.atr?'开启':'关闭'} · RSI ${s.rsi?'开启':'关闭'}${s.macd||s.bollinger?'；当前交易引擎不支持该策略的 MACD / 布林带过滤':''}`:'策略必须先保存在“我的策略库”。';}
@@ -44,8 +69,9 @@
   $('tradeFile').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;try{bars=window.qiceParseBars(await file.text());$('tradeDataLabel').textContent=`${file.name} · ${bars.length} 根`; $('tradeMessage').textContent='行情已载入。启动每条策略时会分别保存该行情样本。';}catch(e){bars=[];$('tradeDataLabel').textContent='文件无效';$('tradeMessage').textContent=e.message;}});
   $('tradeSample').addEventListener('click',async()=>{try{const d=await api('/api/market/sample');bars=d.bars;$('tradeDataLabel').textContent=`${d.name} · ${bars.length} 根 · 合成演示`;$('tradeMessage').textContent=d.notice||'';}catch(e){bars=[];$('tradeDataLabel').textContent='内置样例不可用';$('tradeMessage').textContent=e.message;}});
   $('tradeStrategy').addEventListener('change',updateStrategyNote);$('startStrategyTrade').addEventListener('click',startRun);$('refreshTrading').addEventListener('click',refresh);
-  function ensurePolling(){const active=runs.some(r=>r.status==='running');if(active&&!pollTimer)pollTimer=setInterval(refresh,1200);if(!active&&pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+  document.querySelectorAll('.mode-switch button').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+  function ensurePolling(){if(mode!=='paper'){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}return;}const active=runs.some(r=>r.status==='running');if(active&&!pollTimer)pollTimer=setInterval(refresh,1200);if(!active&&pollTimer){clearInterval(pollTimer);pollTimer=null;}}
   window.addEventListener('strategy-library-updated',e=>fillStrategies(window.strategyLibrary?.all()||e.detail||[]));
-  setInterval(simStatus,1500);simStatus();
+  setMode(mode,true);
   (async()=>{try{fillStrategies(window.strategyLibrary?.all()||[]);await loadRuns();await loadTrades();ensurePolling();}catch(e){$('tradeMessage').textContent=e.message;}})();
 })();

@@ -2,7 +2,7 @@
 
 一个可以完整跑通的量化 demo：**导入行情 → 建策略 → 回测 → 模拟盘逐 bar 回放 → 仪表盘 / 诊断 / 问答**，全部落库在本地 SQLite，浏览器只做展示与交互。
 
-不接券商、不发真实委托、不接实时行情（实时行情仅作为可选的 SimNow/CTP 只读连接）。
+不接券商、不发真实委托、不接实时行情。交易页提供「模拟盘 / 实盘」切换：模拟盘即历史行情回放；实盘页签目前只展示接入前置条件，不连接任何柜台，也不会发出委托。
 
 ---
 
@@ -16,7 +16,7 @@
 # 1) 首次安装（创建 .venv，只装 python-dotenv 一个必需依赖）
 .\scripts\install.ps1
 
-# 2) 编辑 .env 填入 API Key / SimNow 账号（AI 问答与 CTP 都可留空，其余功能照常可用）
+# 2) 编辑 .env 填入 API Key（可留空：AI 问答不用就不填，其余功能照常可用）
 notepad .env
 
 # 3) 启动（-Port 9000 换端口，-NoOpen 不自动开浏览器，-Verbose 输出调试日志）
@@ -91,13 +91,13 @@ python .\scripts\replay.py data\samples\sample_5m_synthetic.csv --fast 9 --slow 
 | `AI_PROVIDER` | `deepseek`（默认）或 `glm` |
 | `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` | DeepSeek Key 与模型（默认 `deepseek-flash`） |
 | `GLM_API_KEY` / `GLM_MODEL` | 选用 GLM 时填写（默认 `glm-5`） |
-| `SIMNOW_USERNAME` / `SIMNOW_PASSWORD` | SimNow 模拟账号 |
+| `SIMNOW_USERNAME` / `SIMNOW_PASSWORD` | SimNow 模拟账号（**交易页已移除该入口**，仅供后端 `app/simnow.py` 网关使用） |
 | `SIMNOW_BROKER_ID` / `SIMNOW_MD_ADDRESS` / `SIMNOW_TD_ADDRESS` | 经纪商代码、行情前置、交易前置 |
 | `SIMNOW_APP_ID` / `SIMNOW_AUTH_CODE` / `SIMNOW_PRODUCT_INFO` | 控制台提供时填写 |
 
 DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completions`，模型标识可能调整，以官方文档为准。
 
-也可以完全不写 `.env`：在「智能问答」页临时填 Key（只存服务进程内存，重启即失效），SimNow 账号同理可在「交易」页临时填。
+也可以完全不写 `.env`：在「智能问答」页临时填 Key（只存服务进程内存，重启即失效）。交易页已不再提供 SimNow 连接表单，如需该网关请直接调用 `/api/simnow/*`。
 
 ---
 
