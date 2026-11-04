@@ -514,6 +514,51 @@ def check_security() -> None:
           status == 400 and "行情" in str(body.get("error", "")), f"status={status}")
 
 
+def check_launcher() -> None:
+    """启动器行为：重复点 run.bat 不该报错，只有"别的程序占端口"才算失败。
+
+    这条是真实踩过的坑：服务在跑的时候再运行一次 run.bat，会甩出一串
+    Errno 10048 和 code 1，用户以为程序坏了。
+    """
+    section("6. 启动器：重复运行复用实例 / 端口被别的程序占用才报错")
+    from app import server as launcher
+
+    info = launcher.probe_running("127.0.0.1", PORT)
+    check("能认出端口上正在跑的就是本服务",
+          isinstance(info, dict) and info.get("service") == "qice-local-paper-lab", str(info))
+
+    check("空闲端口探测不误报", launcher.probe_running("127.0.0.1", free_port()) is None)
+
+    env = {**os.environ, "QICE_NO_OPEN": "1",
+           "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+    def run_server(port: int) -> tuple[int, str]:
+        done = subprocess.run(
+            [sys.executable, "-m", "app.server", "--port", str(port)],
+            cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=90)
+        return done.returncode, f"{done.stdout}\n{done.stderr}"
+
+    code, output = run_server(PORT)
+    check("重复启动退出码为 3（复用，而非失败）", code == 3, f"rc={code}")
+    check("重复启动时提示了可直接打开的地址",
+          f"127.0.0.1:{PORT}" in output, output.strip()[-200:])
+    check("重复启动时提示了如何重启",
+          "重启" in output, output.strip()[-200:])
+
+    squatter = socket.socket()
+    squatter.bind(("127.0.0.1", 0))
+    squatter.listen(8)
+    busy_port = squatter.getsockname()[1]
+    try:
+        code, output = run_server(busy_port)
+        check("端口被其他程序占用时退出码为 1", code == 1, f"rc={code}")
+        check("端口被其他程序占用时建议换端口",
+              "8766" in output, output.strip()[-200:])
+    finally:
+        squatter.close()
+
+
 def main() -> int:
     global PORT, DATA_DIR
     parser = argparse.ArgumentParser(description="期策 · 全链路自检")
@@ -554,6 +599,7 @@ def main() -> int:
             check_simulate()
             check_live_feed()
             check_security()
+            check_launcher()
         finally:
             proc.terminate()
             try:

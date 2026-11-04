@@ -30,4 +30,11 @@ Write-Host '  按 Ctrl+C 停止服务'
 Write-Host ''
 
 & $py @argsList
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+
+# 退出码 3 = 端口上已有本服务在跑，这次只是复用，不算失败
+if ($code -eq 3) {
+    Write-Host '  已有实例在运行，浏览器已尝试打开。要重启请先停掉原来那个窗口。'
+    exit 0
+}
+exit $code
