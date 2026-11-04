@@ -1,77 +1,557 @@
+/**
+ * 策略模拟盘（区间一次跑完）
+ *
+ * 页面只做三件事：选策略 + 选时间段 → 服务端整套跑完 → 把买卖点和盈亏摊开。
+ * 不再要求导入 CSV：行情要么由服务端按交易时段合成（演示），要么来自本机 CTP 采集库。
+ * 绘图复用 kline-core，和「实时 K 线」「仪表盘」是同一份样式与坐标逻辑。
+ */
 (() => {
-  const mount=document.getElementById('paperMount');
-  const $=id=>document.getElementById(id);
-  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const cash=v=>v==null?'—':(v<0?'−':'')+'¥ '+Math.abs(+v||0).toLocaleString('zh-CN',{maximumFractionDigits:2});
-  const statusLabel={running:'运行中',completed:'已完成',stopped:'已取消',paused:'已暂停'};
+  const mount = document.getElementById('paperMount');
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  const cash = v => v == null ? '—' : (v < 0 ? '−' : v > 0 ? '+' : '') + '¥ ' + Math.abs(+v || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+  const plain = v => v == null ? '—' : (v < 0 ? '−' : '') + '¥ ' + Math.abs(+v || 0).toLocaleString('zh-CN', {maximumFractionDigits: 2});
+  const price = v => v == null ? '—' : Number(v).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const pct = (v, d = 2) => v == null ? '—' : (+v).toFixed(d) + '%';
+  const stamp = v => String(v || '').replace('T', ' ').slice(0, 16);
+  const dayText = v => String(v || '').slice(0, 10);
 
-  // 交易模式：paper=历史行情回放，live=实盘（通道未接入，仅展示前置条件）
-  const MODE_KEY='qice.tradeMode';
-  let mode=localStorage.getItem(MODE_KEY)==='live'?'live':'paper';
+  // 交易模式：paper=区间模拟（默认），live=实盘（通道未接入，仅展示前置条件）
+  const MODE_KEY = 'qice.tradeMode';
+  let mode = localStorage.getItem(MODE_KEY) === 'live' ? 'live' : 'paper';
 
-  const REQUIREMENTS=[
-    ['柜台接入','交易前置/经纪商 API 授权、登录与结算确认，断线自动重连。'],
-    ['委托与回报','下单、撤单、部分成交、拒单与错单处理，回报逐笔落库。'],
-    ['持仓与资金对账','柜台持仓/资金与本地账本定时核对，差异即冻结交易。'],
-    ['风控闸门','单笔风险 ≤ 账户 1%、单日亏损停机、最大持仓与价格偏离校验，前置拦截。'],
-    ['合约规则','交易时段与夜盘、涨跌停、保证金、最小变动价位、换月处理。'],
-    ['审计留痕','每笔委托记录决策依据、参数快照与人工复核结果，可回放追溯。']
+  const REQUIREMENTS = [
+    ['柜台接入', '交易前置/经纪商 API 授权、登录与结算确认，断线自动重连。'],
+    ['委托与回报', '下单、撤单、部分成交、拒单与错单处理，回报逐笔落库。'],
+    ['持仓与资金对账', '柜台持仓/资金与本地账本定时核对，差异即冻结交易。'],
+    ['风控闸门', '单笔风险 ≤ 账户 1%、单日亏损停机、最大持仓与价格偏离校验，前置拦截。'],
+    ['合约规则', '交易时段与夜盘、涨跌停、保证金、最小变动价位、换月处理。'],
+    ['审计留痕', '每笔委托记录决策依据、参数快照与人工复核结果，可回放追溯。']
   ];
 
-  mount.innerHTML=`<div class="heading"><div><h1>策略交易</h1><p>模拟盘用历史行情逐 bar 回放；实盘通道尚未接入，当前不会发送任何真实委托。</p></div><div class="toolbar"><span class="tag amber" id="tradingApiState">连接服务中</span><div class="mode-switch" role="tablist" aria-label="交易模式"><button type="button" role="tab" data-mode="paper"><i class="dot"></i>模拟盘</button><button type="button" role="tab" data-mode="live"><i class="dot"></i>实盘</button></div></div></div>
+  mount.innerHTML = `
+  <div class="heading"><div><h1>策略模拟盘</h1><p>选一条策略和一段时间，一次跑完：买卖点、逐笔盈亏、每笔持仓时长都在这一页看完。</p></div><div class="toolbar"><span class="tag amber" id="simStateTag">连接服务中</span><div class="mode-switch" role="tablist" aria-label="交易模式"><button type="button" role="tab" data-mode="paper"><i class="dot"></i>模拟盘</button><button type="button" role="tab" data-mode="live"><i class="dot"></i>实盘</button></div></div></div>
 
   <div class="mode-panel" id="modePaper">
-  <div class="risk-banner"><span>ⓘ</span><div>本页以导入的历史行情逐 bar 回放，不是实时行情。取消运行时如有持仓，会按最后处理 bar 收盘价模拟平仓并记录费用。</div></div>
-  <div class="grid paper-layout"><div class="card"><div class="card-head"><h2>启动模拟交易</h2><span class="sub">最多同时运行 10 条策略</span></div>
-  <div class="field"><label>行情 CSV</label><div class="file-drop">选择已授权的历史行情<input id="tradeFile" type="file" accept=".csv,text/csv"><button class="btn" id="tradeSample" type="button" style="margin-top:8px">载入内置样例行情</button><small id="tradeDataLabel">尚未载入行情</small></div></div>
-  <div class="field" style="margin-top:12px"><label>策略库</label><select id="tradeStrategy" class="select"><option value="">选择已保存策略…</option></select><div id="tradeStrategyNote" class="metric-tip">策略必须先保存在“我的策略库”。</div></div>
-  <div class="form-grid" style="margin-top:12px"><div class="field"><label>单策略初始资金</label><input id="tradeCapital" type="number" value="1000000" min="1" step="10000"></div><div class="field"><label>合约乘数</label><input id="tradeMultiplier" type="number" min="0.01" step="0.1" placeholder="按合约核实"></div><div class="field"><label>每笔手数</label><input id="tradeQty" type="number" value="1" min="1" step="1"></div><div class="field"><label>每边手续费 / 手</label><input id="tradeFee" type="number" min="0" step="0.1" placeholder="按费率核实"></div><div class="field"><label>最小变动价位</label><input id="tradeTick" type="number" min="0.0001" step="0.1" placeholder="按合约核实"></div><div class="field"><label>单边滑点（跳）</label><input id="tradeSlip" type="number" value="1" min="0" step="1"></div><div class="field"><label>单日已实现亏损停开线</label><input id="tradeDailyLoss" type="number" value="1000" min="0" step="100"></div><label class="checkline"><input id="tradeBlackout" type="checkbox" checked> 遵循 CSV 事件禁入标记</label></div>
-  <label class="checkline contract-check"><input id="tradeContractChecked" type="checkbox"> 已核对该品种的乘数、手续费和最小变动价位</label><div class="toolbar paper-controls"><button class="btn primary" id="startStrategyTrade">▶　开始模拟交易</button><button class="btn" id="refreshTrading">刷新运行状态</button></div><div id="tradeMessage" class="metric-tip"></div></div>
-  <div class="card"><div class="card-head"><h2>策略运行账户</h2><span class="tag" id="runningCount">0 / 10 运行中</span></div><div id="tradingRuns"><div class="empty">正在读取策略运行记录…</div></div><div class="note">每条运行记录独立保存。取消一条策略不会停止其他策略；已完成或已取消的记录仍保留在列表中。</div></div></div>
-  <div class="card" style="margin-top:16px"><div class="card-head"><h2>策略模拟成交</h2><span class="sub">所有运行的模拟账本</span></div><div class="table-scroll"><table class="table"><thead><tr><th>运行 ID</th><th>策略</th><th>品种</th><th>方向</th><th>开仓时间 / 价格</th><th>平仓时间 / 价格</th><th>手数</th><th>费用</th><th>净盈亏</th><th>退出原因</th></tr></thead><tbody id="tradingTrades"><tr><td colspan="10" class="empty">暂无成交</td></tr></tbody></table></div></div>
+    <div class="grid sim-layout">
+      <div class="card">
+        <div class="card-head"><h2>模拟设置</h2><span class="sub">一次算完，不用等</span></div>
+        <div class="field"><label>策略</label><select id="simStrategy" class="select"><option value="">内置均线策略（EMA 9 / 21）</option></select><small id="simStrategyNote">不选策略时用内置 EMA 9/21 跑。</small></div>
+        <div class="field" style="margin-top:13px"><label>行情来源</label><div class="seg" id="simSource"></div><small id="simSourceNote">演示行情用于验证策略与界面，不代表真实走势。</small><div id="simSymbolWrap" style="display:none;margin-top:10px"><label style="display:block;font-size:11px;color:#6f7b8e;margin-bottom:5px">采集合约</label><select id="simSymbol" class="select"></select></div></div>
+        <div class="field" style="margin-top:13px"><label>时间段</label><div class="quick" id="simQuick"><button data-days="1">最近 1 个交易日</button><button data-days="3">最近 3 个</button><button data-days="5">最近 5 个</button><button data-days="10">最近 10 个</button></div><div class="sim-dates"><input type="date" id="simStart"><span class="sub">至</span><input type="date" id="simEnd"></div><div class="sim-range" id="simRangeNote">选择交易日区间</div></div>
+        <details class="sim-adv"><summary>合约与成本参数</summary><div class="form-grid"><div class="field"><label>初始资金</label><input id="simCapital" type="number" min="1" step="10000" value="1000000"></div><div class="field"><label>合约乘数</label><input id="simMult" type="number" min="0.01" step="0.1" value="300"></div><div class="field"><label>每笔手数</label><input id="simQty" type="number" min="1" step="1" value="1"></div><div class="field"><label>每边手续费 / 手</label><input id="simFee" type="number" min="0" step="0.1" value="23"></div><div class="field"><label>最小变动价位</label><input id="simTick" type="number" min="0.0001" step="0.1" value="0.2"></div><div class="field"><label>单边滑点（跳）</label><input id="simSlip" type="number" min="0" step="1" value="1"></div><div class="field"><label>ATR 波动上限（%）</label><input id="simAtrMax" type="number" min="0" step="0.05" value="0.4"><small>超过则不新开仓</small></div><label class="checkline"><input id="simBlackout" type="checkbox" checked> 跳过事件禁入 bar</label></div></details>
+        <div class="toolbar" style="margin-top:15px"><button class="btn primary" id="simRun">▶　开始模拟</button><span class="sub" id="simHint"></span></div>
+        <div id="simMessage" class="metric-tip"></div>
+      </div>
+
+      <div>
+        <div class="grid sim-kpis">
+          <div class="card"><div class="kpi-top">净盈亏</div><div class="value" id="simPnl">—</div><div class="metric-tip" id="simPnlTip">已扣双边费用与滑点</div></div>
+          <div class="card"><div class="kpi-top">收益率</div><div class="value" id="simReturn">—</div><div class="metric-tip">相对初始资金</div></div>
+          <div class="card"><div class="kpi-top">胜率</div><div class="value" id="simWin">—</div><div class="metric-tip" id="simWinTip">已平仓交易</div></div>
+          <div class="card"><div class="kpi-top">盈亏因子</div><div class="value" id="simPf">—</div><div class="metric-tip">盈利总额 / 亏损总额</div></div>
+          <div class="card"><div class="kpi-top">最大回撤</div><div class="value" id="simMdd">—</div><div class="metric-tip">逐 bar 权益估算</div></div>
+          <div class="card"><div class="kpi-top">交易笔数</div><div class="value" id="simCount">—</div><div class="metric-tip" id="simCountTip">手续费合计 —</div></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><div><h2>K 线 + 买卖点</h2><div class="sub" id="simResultTitle">还没有结果 · 左侧设置好点「开始模拟」</div></div><div class="toolbar"><div class="seg" id="simZoom"><button type="button" data-zoom="all" class="active">全部</button><button type="button" data-zoom="day">近 1 日</button><button type="button" data-zoom="hour">近 1 小时</button></div><span class="tag" id="simSourceTag" style="display:none">—</span></div></div>
+          <div class="kline-wrap compact"><div id="simKline" class="kline-canvas"></div><div class="marker-layer" id="simMarkerLayer"></div><div class="kline-empty" id="simKlineEmpty"><b>买卖点会画在这里</b><span>红色为买入开仓，绿色为卖出平仓，鼠标悬停看成交价与时间</span></div></div>
+          <div class="chart-note" id="simKlineNote">红点 = 买入开仓 · 绿点 = 卖出平仓；K 线为 1 分钟 bar，已按北京时间对齐。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>权益曲线</h2><div class="sub" id="simEquityMeta">策略权益与买入持有基准对照</div></div><div class="chart-legend"><span><i class="key"></i>策略</span><span><i class="key gray"></i>基准</span></div></div><div class="chart-wrap" id="simEquity"><div class="empty">运行模拟后显示</div></div></div>
+
+    <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>逐笔成交明细</h2><div class="sub" id="simTradeMeta">开仓、平仓、持仓时长与每笔盈亏</div></div><div class="toolbar"><span class="tag" id="simTradeCount">0 笔</span><button class="btn" id="simExport">导出 CSV</button></div></div><div class="table-scroll sim-tbl"><table class="table"><thead><tr><th>#</th><th>方向</th><th>开仓时间 / 价</th><th>平仓时间 / 价</th><th>持仓</th><th>手数</th><th>毛盈亏</th><th>费用</th><th>净盈亏</th><th>收益率</th><th>浮盈 / 浮亏</th><th>退出原因</th></tr></thead><tbody id="simTrades"><tr><td colspan="12" class="empty">运行模拟后显示逐笔成交</td></tr></tbody></table></div></div>
+
+    <div class="grid bottom-grid" style="margin-top:16px">
+      <div class="card"><div class="card-head"><h2>按交易日盈亏</h2><span class="sub" id="simDailyMeta">—</span></div><div class="table-scroll sim-day"><table class="table"><thead><tr><th>交易日</th><th>成交</th><th>胜 / 负</th><th>手续费</th><th>当日盈亏</th><th>累计</th><th>日终权益</th></tr></thead><tbody id="simDaily"><tr><td colspan="7" class="empty">运行模拟后显示</td></tr></tbody></table></div></div>
+      <div class="card"><div class="card-head"><h2>历史模拟记录</h2><span class="tag" id="simHistoryCount">0 条</span></div><div id="simHistory"><div class="metric-tip">还没有模拟记录</div></div><div class="note" id="simNotice">成本口径：信号在 bar 收盘确认，下一根开盘价加减滑点成交，手续费按每边每手计。</div></div>
+    </div>
   </div>
 
   <div class="mode-panel" id="modeLive">
-  <div class="card"><div class="live-hero"><div class="live-icon">⚠</div><div><h2>实盘通道未接入</h2><p>本版本不连接券商柜台，也不会发送任何真实委托。切到这个页签不影响模拟盘运行；下面列出接入实盘必须先补齐的环节，全部通过前不开放下单。</p></div><span class="tag amber">未接入</span></div>
-  <div class="require-list">${REQUIREMENTS.map((r,i)=>`<div class="require-row"><span class="mark">${i+1}</span><div><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div><span class="st">未就绪</span></div>`).join('')}</div>
+  <div class="card"><div class="live-hero"><div class="live-icon">⚠</div><div><h2>实盘通道未接入</h2><p>本版本不连接券商柜台，也不会发送任何真实委托。切到这个页签不影响模拟盘；下面列出接入实盘必须先补齐的环节，全部通过前不开放下单。</p></div><span class="tag amber">未接入</span></div>
+  <div class="require-list">${REQUIREMENTS.map((r, i) => `<div class="require-row"><span class="mark">${i + 1}</span><div><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div><span class="st">未就绪</span></div>`).join('')}</div>
   <div class="toolbar" style="margin-top:16px"><button class="btn primary" id="enableLive" disabled title="接入柜台并通过风控校验后才可启用">启用实盘交易</button><span class="sub" id="liveGate">0 / ${REQUIREMENTS.length} 项就绪 · 实盘开关处于关闭状态</span></div></div>
   <div class="risk-banner" style="margin-top:16px"><span>⚠</span><div><strong>真实资金风险。</strong>即使后续接入实盘，也请先以小资金或仿真账户验证；单笔风险按账户 1% 上限执行，触发单日亏损停机线后当日不再开新仓。</div></div>
   </div>`;
 
-  let bars=[],strategies=[],runs=[],polling=false,pollTimer=null;
+  let options = null, strategies = [], currentSource = 'demo', lastResult = null;
+  let klineView = null, markers = [], markerFrame = null;
+  let currentZoom = 'all', currentBarSpace = 6;
 
-  async function api(path,options={}){const response=await fetch(path,options);let body={};try{body=await response.json();}catch{}if(!response.ok)throw Error(body.error||`服务请求失败 (${response.status})`);return body;}
+  // K 线缩放：全部 / 近 1 日 / 近 1 小时。1 分钟 bar 下 1 个交易日 = 240 根、1 小时 = 60 根。
+  const ZOOM_BARS = {all: Infinity, day: 240, hour: 60};
 
-  function setMode(next,silent){
-    mode=next==='live'?'live':'paper';
-    localStorage.setItem(MODE_KEY,mode);
-    document.querySelectorAll('.mode-switch button').forEach(b=>{
-      const on=b.dataset.mode===mode;
-      b.classList.toggle('active',on);
-      b.setAttribute('aria-selected',on?'true':'false');
-    });
-    $('modePaper').classList.toggle('active',mode==='paper');
-    $('modeLive').classList.toggle('active',mode==='live');
-    if(mode==='paper'){ensurePolling();}
-    else if(pollTimer){clearInterval(pollTimer);pollTimer=null;}   // 实盘页签不推进模拟盘
-    if(!silent)$('tradeMessage').textContent='';
+  function applyBarZoom(zoom) {
+    currentZoom = zoom;
+    const view = klineView;
+    if (!view) return;
+    const total = view.dataList().length;
+    if (!total) return;
+    const usable = (($('simKline').clientWidth || 800) - 90);
+    const target = Math.min(total, ZOOM_BARS[zoom] || Infinity);
+    // 下限放到 0.5：「全部」模式下宁可把蜡烛压成细线，也要让整段区间和所有买卖点同屏
+    const space = Math.min(10, Math.max(0.5, usable / Math.max(1, target)));
+    currentBarSpace = space;
+    try {
+      view.chart.setBarSpace(space);
+      view.chart.scrollToDataIndex(total - 1);
+    } catch (_) { /* 低版本没有该接口，退化为默认缩放 */ }
+    document.querySelectorAll('#simZoom button').forEach(button => button.classList.toggle('active', button.dataset.zoom === zoom));
+    scheduleMarkers();
   }
 
-  function fillStrategies(items){strategies=items||[];const select=$('tradeStrategy'),selected=select.value;select.innerHTML='<option value="">选择已保存策略…</option>'+strategies.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.symbol||'未设品种')}</option>`).join('');if(strategies.some(s=>s.id===selected))select.value=selected;updateStrategyNote();}
-  function chosen(){return strategies.find(s=>s.id===$('tradeStrategy').value);}
-  function updateStrategyNote(){const s=chosen();$('tradeStrategyNote').textContent=s?`${s.maType}(${s.fast}/${s.slow}) · ATR ${s.atr?'开启':'关闭'} · RSI ${s.rsi?'开启':'关闭'}${s.macd||s.bollinger?'；当前交易引擎不支持该策略的 MACD / 布林带过滤':''}`:'策略必须先保存在“我的策略库”。';}
-  async function loadRuns(){try{runs=await api('/api/trading/runs');$('tradingApiState').textContent='服务端已连接';$('tradingApiState').className='tag green';renderRuns();}catch(e){$('tradingApiState').textContent='服务未连接';$('tradingApiState').className='tag amber';$('tradeMessage').textContent=e.message;}}
-  function renderRuns(){const active=runs.filter(r=>r.status==='running'||r.status==='paused').length;$('runningCount').textContent=`${active} / 10 运行中`;$('tradingRuns').innerHTML=runs.length?`<div class="table-scroll"><table class="table"><thead><tr><th>状态</th><th>策略 / 品种</th><th>进度</th><th>模拟权益</th><th>已实现盈亏</th><th>当前持仓</th><th>启动时间</th><th>操作</th></tr></thead><tbody>${runs.map(r=>`<tr><td><span class="tag ${r.status==='running'?'green':r.status==='stopped'?'amber':''}">${statusLabel[r.status]||esc(r.status)}</span></td><td><b>${esc(r.strategyName)}</b><br><span class="muted">${esc(r.symbol)}</span></td><td>${r.cursor}/${r.totalBars} bar (${(+r.progressPct).toFixed(1)}%)</td><td>${cash(r.equity)}</td><td class="${r.realizedPnl>=0?'positive':'negative'}">${cash(r.realizedPnl)}</td><td>${r.position?`持有 ${r.position.side==='LONG'?'多头':'空头'} ${r.position.qty||''} 手`:'空仓'}</td><td>${esc((r.createdAt||'').replace('T',' ').slice(0,16))}</td><td>${['running','paused'].includes(r.status)?`<button class="btn danger" data-cancel="${esc(r.runId)}">取消</button>`:'—'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">还没有策略运行记录。选择策略、导入行情并点击“开始模拟交易”。</div>';document.querySelectorAll('[data-cancel]').forEach(b=>b.addEventListener('click',()=>cancelRun(b.dataset.cancel)));}
-  async function loadTrades(){try{const trades=await api('/api/trading/trades');$('tradingTrades').innerHTML=trades.length?trades.slice(0,100).map(t=>`<tr><td>${esc((t.runId||'').slice(0,8))}</td><td>${esc(t.strategyName)}</td><td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${esc(t.entryTime)} / ${(+t.entryPrice).toFixed(2)}</td><td>${esc(t.exitTime)} / ${(+t.exitPrice).toFixed(2)}</td><td>${esc(t.qty)}</td><td>${cash(t.fees)}</td><td class="${t.netPnl>=0?'positive':'negative'}">${cash(t.netPnl)}</td><td>${esc(t.exitReason)}</td></tr>`).join(''):'<tr><td colspan="10" class="empty">暂无模拟成交</td></tr>';}catch(e){$('tradingTrades').innerHTML=`<tr><td colspan="10" class="empty">${esc(e.message)}</td></tr>`;}}
-  async function refresh(){if(polling)return;polling=true;try{const active=runs.filter(r=>r.status==='running');if(active.length){await Promise.all(active.map(r=>api(`/api/trading/runs/${encodeURIComponent(r.runId)}/step`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>null)));}await loadRuns();await loadTrades();ensurePolling();}finally{polling=false;}}
-  async function startRun(){const strategy=chosen();if(!strategy){$('tradeMessage').textContent='请先从策略库选择一条已保存策略。';return;}if(!bars.length){$('tradeMessage').textContent='请先选择有效的历史行情 CSV。';return;}if(strategy.macd||strategy.bollinger){$('tradeMessage').textContent='当前模拟引擎不支持该策略的 MACD / 布林带过滤，请先在策略库调整。';return;}if(['tradeMultiplier','tradeFee','tradeTick'].some(id=>$(id).value==='')){$('tradeMessage').textContent='请填写合约乘数、每边手续费和最小变动价位。';return;}if(!$('tradeContractChecked').checked){$('tradeMessage').textContent='开始前请确认合约参数。';return;}const config={fast:strategy.fast,slow:strategy.slow,maType:strategy.maType,atr:!!strategy.atr,atrPeriod:strategy.atrPeriod||14,atrMaxPct:strategy.atrMaxPct??0.4,rsi:!!strategy.rsi,rsiPeriod:+((strategy.rsiParams||'14').match(/\d+/)||[14])[0],rsiUpper:+((strategy.rsiParams||'70').match(/\d+\s*$/)||[70])[0],capital:+$('tradeCapital').value,multiplier:+$('tradeMultiplier').value,qty:+$('tradeQty').value,feePerSide:+$('tradeFee').value,tickSize:+$('tradeTick').value,slippageTicks:+$('tradeSlip').value,slippage:+$('tradeTick').value*+$('tradeSlip').value,dailyLossLimit:+$('tradeDailyLoss').value,useBlackout:$('tradeBlackout').checked};$('startStrategyTrade').disabled=true;try{await api('/api/trading/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({strategyId:strategy.id,bars,config})});$('tradeMessage').textContent=`“${strategy.name}”模拟交易已启动；可继续选择其他策略并启动。`;await loadRuns();ensurePolling();}catch(e){$('tradeMessage').textContent=e.message;}finally{$('startStrategyTrade').disabled=false;}}
-  async function cancelRun(id){if(!confirm('确认取消这条策略运行？如有持仓，将按当前 bar 收盘价模拟退出。'))return;try{await api(`/api/trading/runs/${encodeURIComponent(id)}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});$('tradeMessage').textContent='该策略已取消，其他策略继续运行。';await loadRuns();await loadTrades();ensurePolling();}catch(e){$('tradeMessage').textContent=e.message;}}
-  $('tradeFile').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;try{bars=window.qiceParseBars(await file.text());$('tradeDataLabel').textContent=`${file.name} · ${bars.length} 根`; $('tradeMessage').textContent='行情已载入。启动每条策略时会分别保存该行情样本。';}catch(e){bars=[];$('tradeDataLabel').textContent='文件无效';$('tradeMessage').textContent=e.message;}});
-  $('tradeSample').addEventListener('click',async()=>{try{const d=await api('/api/market/sample');bars=d.bars;$('tradeDataLabel').textContent=`${d.name} · ${bars.length} 根 · 合成演示`;$('tradeMessage').textContent=d.notice||'';}catch(e){bars=[];$('tradeDataLabel').textContent='内置样例不可用';$('tradeMessage').textContent=e.message;}});
-  $('tradeStrategy').addEventListener('change',updateStrategyNote);$('startStrategyTrade').addEventListener('click',startRun);$('refreshTrading').addEventListener('click',refresh);
-  document.querySelectorAll('.mode-switch button').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
-  function ensurePolling(){if(mode!=='paper'){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}return;}const active=runs.some(r=>r.status==='running');if(active&&!pollTimer)pollTimer=setInterval(refresh,1200);if(!active&&pollTimer){clearInterval(pollTimer);pollTimer=null;}}
-  window.addEventListener('strategy-library-updated',e=>fillStrategies(window.strategyLibrary?.all()||e.detail||[]));
-  setMode(mode,true);
-  (async()=>{try{fillStrategies(window.strategyLibrary?.all()||[]);await loadRuns();await loadTrades();ensurePolling();}catch(e){$('tradeMessage').textContent=e.message;}})();
+  // 只读诊断入口：排查"图只显示了一部分"这类布局问题时，可在控制台看实际 barSpace 与可见区间
+  window.qiceSim = {
+    zoom: () => ({mode: currentZoom, barSpace: currentBarSpace, bars: klineView ? klineView.dataList().length : 0,
+                  width: $('simKline') ? $('simKline').clientWidth : 0,
+                  range: klineView ? klineView.chart.getVisibleRange() : null})
+  };
+
+  async function api(path, init = {}) {
+    const response = await fetch(path, init);
+    let body = {};
+    try { body = await response.json(); } catch (_) { /* 非 JSON 响应 */ }
+    if (!response.ok) throw Error(body.error || `服务请求失败 (${response.status})`);
+    return body;
+  }
+
+  // ---- 模式切换 --------------------------------------------------------
+  function setMode(next, silent) {
+    mode = next === 'live' ? 'live' : 'paper';
+    localStorage.setItem(MODE_KEY, mode);
+    document.querySelectorAll('.mode-switch button').forEach(button => {
+      const on = button.dataset.mode === mode;
+      button.classList.toggle('active', on);
+      button.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $('modePaper').classList.toggle('active', mode === 'paper');
+    $('modeLive').classList.toggle('active', mode === 'live');
+    if (mode === 'paper' && klineView) requestAnimationFrame(() => { klineView.resize(); scheduleMarkers(); });
+    if (!silent) $('simMessage').textContent = '';
+  }
+
+  // ---- 日期工具 --------------------------------------------------------
+  const isoDay = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+  function tradingDaysBack(count) {
+    const anchor = new Date(`${(options && options.today) || isoDay(new Date())}T00:00:00`);
+    const days = [];
+    while (days.length < count) {
+      const week = anchor.getDay();
+      if (week !== 0 && week !== 6) days.push(isoDay(anchor));
+      anchor.setDate(anchor.getDate() - 1);
+    }
+    return days.reverse();
+  }
+
+  function setRangeDays(count) {
+    const days = tradingDaysBack(count);
+    if (!days.length) return;
+    $('simStart').value = days[0];
+    $('simEnd').value = days[days.length - 1];
+    updateRangeNote();
+  }
+
+  function countTradingDays(start, end) {
+    if (!start || !end) return 0;
+    const from = new Date(start + 'T00:00:00'), to = new Date(end + 'T00:00:00');
+    if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
+    let total = 0;
+    for (const cursor = new Date(from); cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
+      const week = cursor.getDay();
+      if (week !== 0 && week !== 6) total += 1;
+    }
+    return total;
+  }
+
+  function updateRangeNote() {
+    const start = $('simStart').value, end = $('simEnd').value;
+    const days = countTradingDays(start, end);
+    if (!start || !end || !days) { $('simRangeNote').textContent = '请选择有效的起止日期（只算周一至周五）'; return; }
+    $('simRangeNote').innerHTML = `<b>${esc(start)}</b> 至 <b>${esc(end)}</b> · ${days} 个交易日 · 约 ${(days * 240).toLocaleString('zh-CN')} 根 1 分钟 bar`
+      + (days > (options?.maxDays || 20) ? '　<span style="color:#c4545c">超过单次上限</span>' : '');
+    // 日期和某个快捷按钮对得上就高亮它，手动改日期则全部取消
+    document.querySelectorAll('#simQuick button').forEach(button => {
+      const span = tradingDaysBack(+button.dataset.days);
+      button.classList.toggle('active', span[0] === start && span[span.length - 1] === end);
+    });
+  }
+
+  // ---- 选项 / 策略 ------------------------------------------------------
+  function renderSources() {
+    const box = $('simSource');
+    box.innerHTML = (options?.sources || []).map(source => {
+      const live = source.id === 'live';
+      const ready = (options?.contracts || []).some(row => row.count >= (options?.minBars || 30));
+      const badge = live ? (ready ? '可用' : '未采够') : '可用';
+      return `<button type="button" data-source="${source.id}" class="${source.id === currentSource ? 'active' : ''}">${esc(source.label)}<small>${esc(badge)}</small></button>`;
+    }).join('');
+    box.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+      currentSource = button.dataset.source;
+      renderSources();
+      updateSourceNote();
+      updateSymbolPicker();
+    }));
+    updateSourceNote();
+    updateSymbolPicker();
+  }
+
+  // 真实采集才需要选合约；演示行情固定用 IF-DEMO
+  function updateSymbolPicker() {
+    const wrap = $('simSymbolWrap');
+    if (!wrap) return;
+    wrap.style.display = currentSource === 'live' ? '' : 'none';
+    if (currentSource !== 'live') return;
+    const all = options?.contracts || [];
+    const minimum = options?.minBars || 30;
+    const select = $('simSymbol'), previous = select.value;
+    select.innerHTML = all.length
+      ? all.map(row => `<option value="${esc(row.symbol)}">${esc(row.symbol)} · ${row.count} 根${row.count < minimum ? '（不足）' : ''}</option>`).join('')
+      : '<option value="">还没有采集到行情</option>';
+    if (all.some(row => row.symbol === previous)) select.value = previous;
+  }
+
+  function updateSourceNote() {
+    const source = (options?.sources || []).find(item => item.id === currentSource);
+    const contracts = (options?.contracts || []).filter(row => row.count >= (options?.minBars || 30));
+    let text = source ? source.desc : '';
+    if (currentSource === 'live') {
+      text += contracts.length
+        ? ` 可用合约：${contracts.map(row => `${row.symbol}（${row.count} 根）`).join('、')}`
+        : ' 目前还没有采集够一根策略所需的 bar，先在「实时 K 线」页保持 CTP 采集。';
+    }
+    $('simSourceNote').textContent = text;
+  }
+
+  function fillStrategies(items) {
+    strategies = items || [];
+    const select = $('simStrategy'), selected = select.value;
+    select.innerHTML = '<option value="">内置均线策略（EMA 9 / 21）</option>'
+      + strategies.map(item => `<option value="${esc(item.id)}">${esc(item.name)}${item.symbol ? ' · ' + esc(item.symbol) : ''}</option>`).join('');
+    if (strategies.some(item => item.id === selected)) select.value = selected;
+    updateStrategyNote();
+  }
+
+  function chosenStrategy() { return strategies.find(item => item.id === $('simStrategy').value); }
+
+  function updateStrategyNote() {
+    const strategy = chosenStrategy();
+    if (!strategy) {
+      $('simStrategyNote').textContent = '内置策略：EMA(9) 上穿 EMA(21) 做多，ATR 过滤开启，RSI 关闭。';
+      return;
+    }
+    const filters = [strategy.atr ? 'ATR 过滤' : null, strategy.rsi ? `RSI<${strategy.rsiUpper || 70}` : null].filter(Boolean);
+    $('simStrategyNote').textContent = `${strategy.maType || 'EMA'}(${strategy.fast}/${strategy.slow})`
+      + (filters.length ? ` · ${filters.join(' · ')}` : ' · 无过滤器')
+      + (strategy.macd || strategy.bollinger ? ' · 该策略的 MACD / 布林带条件暂不参与撮合' : '');
+  }
+
+  // ---- 运行 ------------------------------------------------------------
+  function collectConfig() {
+    const tick = +$('simTick').value, slipTicks = +$('simSlip').value;
+    return {
+      capital: +$('simCapital').value,
+      multiplier: +$('simMult').value,
+      qty: +$('simQty').value,
+      feePerSide: +$('simFee').value,
+      tickSize: tick,
+      slippageTicks: slipTicks,
+      slippage: +(tick * slipTicks).toFixed(6),
+      atrMaxPct: +$('simAtrMax').value,
+      useBlackout: $('simBlackout').checked
+    };
+  }
+
+  async function run() {
+    const start = $('simStart').value, end = $('simEnd').value;
+    if (!start || !end) { $('simMessage').textContent = '请先选择时间段。'; return; }
+    const config = collectConfig();
+    if ([config.capital, config.multiplier, config.qty, config.tickSize].some(v => !(v > 0)) || config.feePerSide < 0) {
+      $('simMessage').textContent = '初始资金、合约乘数、手数和最小变动价位必须大于 0。';
+      return;
+    }
+    const strategyId = $('simStrategy').value;
+    $('simRun').disabled = true;
+    $('simRun').textContent = '回放中…';
+    $('simMessage').textContent = '正在回放这段行情…';
+    try {
+      const result = await api('/api/simulate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          strategyId: strategyId || null, source: currentSource, start, end, config,
+          symbol: currentSource === 'live' ? ($('simSymbol')?.value || null) : null
+        })
+      });
+      render(result);
+      $('simMessage').textContent = `已跑完 ${result.barCount} 根 bar，产生 ${result.trades.length} 笔成交，结果已保存。`;
+      loadHistory();
+    } catch (error) {
+      $('simMessage').textContent = error.message;
+    } finally {
+      $('simRun').disabled = false;
+      $('simRun').textContent = '▶　开始模拟';
+    }
+  }
+
+  // ---- 结果渲染 --------------------------------------------------------
+  let markerBound = false;
+
+  function ensureKlineView() {
+    if (klineView) { klineView.resize(); return klineView; }
+    const holder = $('simKline');
+    if (!holder || !window.qiceKline) return null;
+    klineView = window.qiceKline.create(holder, {onViewChange: scheduleMarkers});
+    if (klineView && !markerBound) {
+      markerBound = true;
+      window.addEventListener('resize', () => { if (klineView) { klineView.resize(); scheduleMarkers(); } });
+    }
+    return klineView;
+  }
+
+  function scheduleMarkers() {
+    if (markerFrame) return;
+    markerFrame = requestAnimationFrame(() => { markerFrame = null; renderMarkers(); });
+  }
+
+  function buildMarkers(trades) {
+    markers = [];
+    trades.forEach(trade => {
+      const entryTs = Date.parse(trade.entryTime);
+      if (Number.isFinite(entryTs) && +trade.entryPrice > 0) {
+        markers.push({ts: entryTs, value: +trade.entryPrice, kind: 'buy', label: `买 ${price(trade.entryPrice)}`,
+          tip: `买入开仓 @ ${price(trade.entryPrice)}　${stamp(trade.entryTime)}　第 ${trade.id} 笔`});
+      }
+      const exitTs = Date.parse(trade.exitTime);
+      if (Number.isFinite(exitTs) && +trade.exitPrice > 0) {
+        markers.push({ts: exitTs, value: +trade.exitPrice, kind: 'sell', label: `卖 ${price(trade.exitPrice)}`,
+          tip: `卖出平仓 @ ${price(trade.exitPrice)}　${stamp(trade.exitTime)}　净盈亏 ${plain(trade.netPnl)}`});
+      }
+    });
+  }
+
+  function renderMarkers() {
+    const layer = $('simMarkerLayer');
+    if (!layer) return;
+    if (!klineView || !markers.length) { layer.innerHTML = ''; return; }
+    const list = klineView.dataList();
+    if (!list.length) { layer.innerHTML = ''; return; }
+    const times = list.map(bar => bar.timestamp);
+    const indexOf = ts => {
+      let lo = 0, hi = times.length - 1, ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (times[mid] <= ts) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      return ans;
+    };
+    const range = klineView.chart.getVisibleRange() || {};
+    const width = layer.clientWidth || 0;
+    const frag = document.createDocumentFragment();
+    const placed = [];
+    markers.forEach(marker => {
+      const index = indexOf(marker.ts);
+      if (index < 0) return;
+      if (range.from != null && (index < range.from - 2 || index > range.to + 2)) return;
+      const bar = list[index];
+      // 买点挂在这根 bar 的最低点下方、卖点挂在最高点上方，避免压住蜡烛实体
+      const anchor = marker.kind === 'buy' ? Math.min(bar.low, marker.value) : Math.max(bar.high, marker.value);
+      const point = klineView.chart.convertToPixel({dataIndex: index, value: anchor}, {paneId: 'candle_pane'});
+      if (!point || point.x == null || point.y == null) return;
+      const x = width ? Math.min(Math.max(point.x, 46), width - 74) : point.x;
+      let y = point.y + (marker.kind === 'buy' ? 5 : -5);
+      for (let guard = 0; guard < 6; guard += 1) {
+        if (!placed.find(item => Math.abs(item.x - x) < 62 && Math.abs(item.y - y) < 16)) break;
+        y += marker.kind === 'buy' ? 15 : -15;
+      }
+      placed.push({x, y});
+      const node = document.createElement('div');
+      // 一根 bar 不到 2px 时，带文字的标签必然互相压住，退化成圆点，细节交给悬停提示
+      node.className = `tr-badge ${marker.kind}${currentBarSpace < 2 ? ' mini' : ''}`;
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+      node.textContent = marker.label;
+      node.title = marker.tip;
+      frag.appendChild(node);
+    });
+    layer.innerHTML = '';
+    layer.appendChild(frag);
+  }
+
+  function drawEquity(curve) {
+    const box = $('simEquity');
+    if (!curve || !curve.length) { box.innerHTML = '<div class="empty">运行模拟后显示</div>'; return; }
+    const W = 900, H = 235, pad = 46;
+    const values = curve.flatMap(point => [point.equity, point.benchmark]);
+    const low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+    const x = index => pad + index / Math.max(1, curve.length - 1) * (W - pad * 2);
+    const y = value => H - 30 - (value - low) / span * (H - 52);
+    const path = key => curve.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(' ');
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`
+      + [0, 0.5, 1].map(ratio => {
+          const value = low + span * ratio;
+          return `<line class="axis" x1="${pad}" y1="${y(value)}" x2="${W - pad}" y2="${y(value)}"/>`
+            + `<text x="2" y="${y(value) + 3}" class="tick">${plain(value)}</text>`;
+        }).join('')
+      + `<path d="${path('benchmark')}" fill="none" stroke="#aeb9cb" stroke-width="1.6" stroke-dasharray="5 4"/>`
+      + `<path d="${path('equity')}" fill="none" stroke="#5277ee" stroke-width="2.3"/>`
+      + `<text x="${pad}" y="${H - 6}" class="tick">${esc(stamp(curve[0].timestamp))}</text>`
+      + `<text x="${W - 132}" y="${H - 6}" class="tick">${esc(stamp(curve[curve.length - 1].timestamp))}</text></svg>`;
+  }
+
+  function renderRow(trade, index) {
+    const positive = trade.netPnl >= 0;
+    return `<tr title="${esc(`${trade.id} · ${trade.entryReason || ''} → ${trade.exitReason || ''}`)}">`
+      + `<td class="muted">${index + 1}</td><td>${esc(trade.side)}</td>`
+      + `<td>${esc(stamp(trade.entryTime))}<br><span class="muted">${price(trade.entryPrice)}</span></td>`
+      + `<td>${esc(stamp(trade.exitTime))}<br><span class="muted">${price(trade.exitPrice)}</span></td>`
+      + `<td>${esc(trade.holdLabel || '—')}</td><td>${esc(trade.qty)}</td>`
+      + `<td class="${trade.grossPnl >= 0 ? 'positive' : 'negative'}">${plain(trade.grossPnl)}</td>`
+      + `<td class="muted">${plain(trade.fees)}</td>`
+      + `<td class="${positive ? 'positive' : 'negative'}"><b>${cash(trade.netPnl)}</b></td>`
+      + `<td class="${positive ? 'positive' : 'negative'}">${pct(trade.returnPct)}</td>`
+      + `<td class="muted">${pct(trade.mfePct, 2)} / ${pct(trade.maePct, 2)}</td>`
+      + `<td class="muted">${esc(trade.exitReason || '—')}</td></tr>`;
+  }
+
+  function render(result) {
+    lastResult = result;
+    const summary = result.summary || {};
+    $('simPnl').textContent = cash(summary.netPnl);
+    $('simPnl').className = 'value ' + (summary.netPnl >= 0 ? 'positive' : 'negative');
+    $('simPnlTip').textContent = `期末权益 ${plain(summary.endEquity)}`;
+    $('simReturn').textContent = pct(summary.returnPct, 2);
+    $('simReturn').className = 'value ' + (summary.returnPct >= 0 ? 'positive' : 'negative');
+    $('simWin').textContent = pct(summary.winRatePct, 1);
+    $('simWinTip').textContent = `盈利 ${result.trades.filter(t => t.netPnl > 0).length} 笔 / 亏损 ${result.trades.filter(t => t.netPnl < 0).length} 笔`;
+    $('simPf').textContent = summary.profitFactor === 'Infinity' ? '∞' : summary.profitFactor == null ? '—' : (+summary.profitFactor).toFixed(2);
+    $('simMdd').textContent = pct(summary.maxDrawdownPct, 2);
+    $('simCount').textContent = summary.tradeCount || 0;
+    $('simCountTip').textContent = `手续费合计 ${plain(summary.feesTotal)}`;
+
+    $('simResultTitle').textContent = `${result.strategyName} · ${result.symbol} · ${dayText(result.startTime)} → ${dayText(result.endTime)} · ${result.barCount} 根 bar`;
+    $('simSourceTag').textContent = (result.source && result.source.label) || '—';
+    $('simSourceTag').style.display = '';
+    $('simSourceTag').className = 'tag ' + (result.source && result.source.kind === 'live' ? 'green' : 'amber');
+    $('simEquityMeta').textContent = `策略 vs 买入持有 · 单笔期望 ${plain(summary.expectancy)} · 平均持仓 ${summary.avgHoldMinutes || 0} 分钟`;
+    $('simTradeMeta').textContent = `开仓 → 平仓 → 持仓时长；浮盈/浮亏取持仓期间的最高/最低价`;
+    $('simTradeCount').textContent = `${result.trades.length} 笔`;
+    $('simNotice').textContent = result.notice || '结果只描述这段历史的模拟表现，不代表未来。';
+
+    // K 线
+    const view = ensureKlineView();
+    if (view) {
+      const clean = view.apply(result.bars || []);
+      $('simKlineEmpty').style.display = clean.length ? 'none' : 'flex';
+      buildMarkers(result.trades || []);
+      // 图表首帧布局没完成时 setBarSpace 会被随后的内部重排覆盖，
+      // 这里在几个时间点各设一次（幂等），确保不同机器速度下都能落到目标缩放
+      [60, 220, 600].forEach(delay => setTimeout(() => {
+        if (!klineView) return;
+        klineView.resize();
+        applyBarZoom(currentZoom);
+      }, delay));
+    } else {
+      $('simKlineEmpty').style.display = 'flex';
+      $('simKlineEmpty').innerHTML = '<b>图表容器还没准备好</b><span>切到本页后重新运行一次即可</span>';
+    }
+
+    drawEquity(result.curve || []);
+
+    $('simTrades').innerHTML = result.trades.length
+      ? result.trades.map(renderRow).join('')
+      : '<tr><td colspan="12" class="empty">这段时间没有触发任何成交：可以放长区间，或在策略库把均线周期调小</td></tr>';
+
+    $('simDaily').innerHTML = (result.daily || []).length
+      ? result.daily.map(day => `<tr><td>${esc(day.date)}</td><td>${day.tradeCount}</td><td>${day.wins} / ${day.losses}</td><td class="muted">${plain(day.fees)}</td><td class="${day.netPnl >= 0 ? 'positive' : 'negative'}">${cash(day.netPnl)}</td><td class="${day.cumPnl >= 0 ? 'positive' : 'negative'}">${plain(day.cumPnl)}</td><td>${plain(day.dayEndEquity)}</td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">暂无按日数据</td></tr>';
+    $('simDailyMeta').textContent = `${(result.daily || []).length} 个交易日 · 已实现盈亏按平仓日归集`;
+  }
+
+  // ---- 历史记录 --------------------------------------------------------
+  async function loadHistory() {
+    try {
+      const runs = await api('/api/simulate/history');
+      $('simHistoryCount').textContent = `${runs.length} 条`;
+      $('simHistory').innerHTML = runs.length
+        ? runs.map(run => `<button class="btn sim-hist" data-run="${esc(run.runId)}"><span>${esc(run.strategyName || '未命名')} · ${esc(run.symbol || '')}<br><span class="muted">${esc(run.startTime || '')} → ${esc(run.endTime || '')} · ${run.tradeCount} 笔</span></span><b class="${run.netPnl >= 0 ? 'positive' : 'negative'}">${cash(run.netPnl)}</b></button>`).join('')
+        : '<div class="metric-tip">还没有模拟记录</div>';
+      $('simHistory').querySelectorAll('[data-run]').forEach(button => button.addEventListener('click', () => loadRun(button.dataset.run)));
+    } catch (error) {
+      $('simHistory').innerHTML = `<div class="metric-tip">${esc(error.message)}</div>`;
+    }
+  }
+
+  async function loadRun(runId) {
+    $('simMessage').textContent = '正在读取历史模拟记录…';
+    try {
+      render(await api(`/api/simulate/${encodeURIComponent(runId)}`));
+      $('simMessage').textContent = '已载入历史模拟记录。';
+    } catch (error) {
+      $('simMessage').textContent = error.message;
+    }
+  }
+
+  // ---- 事件 ------------------------------------------------------------
+  $('simStrategy').addEventListener('change', updateStrategyNote);
+  $('simZoom').addEventListener('click', event => {
+    const button = event.target.closest('button[data-zoom]');
+    if (button) applyBarZoom(button.dataset.zoom);
+  });
+  $('simQuick').addEventListener('click', event => {
+    const button = event.target.closest('button[data-days]');
+    if (button) setRangeDays(+button.dataset.days);
+  });
+  [$('simStart'), $('simEnd')].forEach(input => input.addEventListener('change', updateRangeNote));
+  $('simRun').addEventListener('click', run);
+  document.querySelectorAll('.mode-switch button').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
+  $('simExport').addEventListener('click', () => {
+    if (!lastResult || !lastResult.trades.length) return;
+    const header = ['编号', '方向', '开仓时间', '开仓价', '平仓时间', '平仓价', '持仓分钟', '手数', '毛盈亏', '费用', '净盈亏', '收益率%', '最大浮盈%', '最大浮亏%', '退出原因'];
+    const rows = [header, ...lastResult.trades.map(trade => [trade.id, trade.side, trade.entryTime, trade.entryPrice,
+      trade.exitTime, trade.exitPrice, trade.holdMinutes, trade.qty, trade.grossPnl, trade.fees, trade.netPnl,
+      trade.returnPct, trade.mfePct, trade.maePct, trade.exitReason])];
+    const csv = '\ufeff' + rows.map(row => row.map(cell => `"${String(cell ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+    link.download = `模拟成交_${lastResult.strategyName || '策略'}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+  window.addEventListener('qice-page-change', event => {
+    if (event.detail !== 'paper') return;
+    if (klineView) { klineView.resize(); scheduleMarkers(); }
+  });
+  window.addEventListener('strategy-library-updated', event => fillStrategies(window.strategyLibrary?.all() || event.detail || []));
+
+  // ---- 启动 ------------------------------------------------------------
+  setMode(mode, true);
+  (async () => {
+    try {
+      options = await api('/api/simulate/options');
+      $('simStateTag').textContent = '服务已连接';
+      $('simStateTag').className = 'tag green';
+      const defaults = options.defaults || {};
+      currentSource = defaults.source || 'demo';
+      ['capital', 'multiplier', 'qty', 'feePerSide', 'tickSize', 'slippageTicks', 'atrMaxPct'].forEach(key => {
+        const input = {capital: 'simCapital', multiplier: 'simMult', qty: 'simQty', feePerSide: 'simFee',
+          tickSize: 'simTick', slippageTicks: 'simSlip', atrMaxPct: 'simAtrMax'}[key];
+        if (defaults[key] != null && $(input)) $(input).value = defaults[key];
+      });
+      renderSources();
+      setRangeDays(defaults.days || 3);
+      $('simHint').textContent = `最多 ${options.maxDays} 个交易日`;
+    } catch (error) {
+      $('simStateTag').textContent = '服务未连接';
+      $('simStateTag').className = 'tag amber';
+      $('simMessage').textContent = error.message;
+    }
+    try {
+      fillStrategies(window.strategyLibrary?.all() || await api('/api/strategies'));
+    } catch (_) { fillStrategies(window.strategyLibrary?.all() || []); }
+    loadHistory();
+  })();
 })();

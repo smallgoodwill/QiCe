@@ -43,6 +43,10 @@
 .tr-badge.buy{background:#fdecec;color:#bf3b42;border:1px solid #f0b5b8;transform:translate(-50%,0)}
 .tr-badge.sell{background:#e6f6f0;color:#0f6b52;border:1px solid #a9ddcd;transform:translate(-50%,-100%)}
 .tr-badge.is-hidden{display:none}
+/* 密集区间只画圆点，避免带文字的标签互相压住；细节靠 title 悬停 */
+.tr-badge.mini{width:10px;height:10px;min-width:0;padding:0;border-radius:50%;font-size:0;line-height:0;box-shadow:0 1px 3px #1b2d4b33;transform:translate(-50%,-50%)}
+.tr-badge.mini.buy{background:#e06465;border:1px solid #fff}
+.tr-badge.mini.sell{background:#139875;border:1px solid #fff}
 .live-quote{display:flex;gap:13px;align-items:baseline;font-size:11px;color:var(--muted);flex-wrap:wrap}
 .live-quote b{font-size:17px;color:var(--ink);letter-spacing:-.3px}
 .live-trades{max-height:430px;overflow:auto;margin-top:9px}
@@ -53,6 +57,30 @@
 .live-trade .side.sell{color:var(--green)}
 .live-trade .t{color:var(--muted);font-size:10px}
 @media(max-width:1050px){.live-layout{grid-template-columns:1fr}.kline-wrap{height:420px}}
+/* ---- 策略模拟盘（区间一次跑完） ---- */
+.sim-layout{grid-template-columns:minmax(0,350px) minmax(0,1fr);align-items:start}
+.sim-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sim-kpis .value{font-size:20px;margin:10px 0 2px}
+.sim-kpis .kpi-top{font-size:11px}
+.seg{display:flex;background:#eef1f7;border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:none;font:inherit;font-size:11px;color:#5d6a80;padding:8px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.seg button:hover{color:var(--blue)}
+.seg button.active{background:#fff;color:var(--blue);font-weight:650;box-shadow:0 1px 3px #1b2d4b1f}
+.seg button small{display:block;font-size:9px;font-weight:400;color:#9aa3b2;margin-top:1px}
+.sim-dates{display:flex;align-items:center;gap:7px;margin-top:8px}
+.sim-dates input{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;padding:7px 8px;font:inherit;font-size:11px;color:var(--ink)}
+.sim-dates input:focus{outline:2px solid #dfe7ff;border-color:#9db2f4}
+.sim-adv{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.sim-adv summary{cursor:pointer;font-size:11px;color:#526078;font-weight:600}
+.sim-adv .form-grid{gap:10px;margin-top:11px}
+.sim-tbl{max-height:430px;overflow:auto}
+.sim-day{max-height:290px;overflow:auto}
+.quick button.active{border-color:#9db2f4;color:var(--blue);background:#edf2ff;font-weight:600}
+.sim-range{font-size:11px;color:#6f7b8e;background:#f6f8fc;border-radius:7px;padding:8px 10px;margin-top:9px}
+.sim-range b{color:var(--ink)}
+.sim-hist{display:flex;width:100%;justify-content:space-between;gap:10px;margin:5px 0;text-align:left}
+@media(max-width:1050px){.sim-layout{grid-template-columns:1fr}}
+@media(max-width:680px){.sim-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
 <body>
@@ -62,7 +90,7 @@
 </nav><div class="sidebar-foot"><div class="safe"><i class="dot"></i>仅本地模拟运行</div>教学演示 · 数据非实时</div></aside>
 <main class="main"><header class="topbar"><div class="crumb"><span style="color:#a0aabc">工作台</span>　/　<span id="crumb">总览仪表盘</span></div><div class="topright"><span class="badge">● PAPER TRADING</span><span class="hide-sm">数据来源：本地服务端</span><div class="avatar">研</div></div></header>
 <div class="content">
-<div class="risk-banner"><span>⚠</span><div><strong>纸面模拟环境</strong>　只处理你导入的历史行情并记录虚拟成交；不接入实时行情、券商或真实订单。回测和模拟结果不代表未来表现。</div></div>
+<div class="risk-banner"><span>⚠</span><div><strong>纸面模拟环境</strong>　行情来自按交易时段合成的演示数据，或本机从 CTP 采集落库的分钟 K 线；不接券商柜台、不发真实委托。回测与模拟只描述所选区间的历史表现，不代表未来收益。</div></div>
 <section class="page active" id="page-overview"><div id="dashboardMount"></div></section>
 
 <section class="page" id="page-strategy"><div class="heading"><div><h1>我的策略库</h1><p>创建、编辑并管理供回测和模拟回放使用的策略。</p></div><div class="toolbar"><span class="tag green" id="strategyState">运行中</span><button class="btn" id="strategyToggle">⏸ 暂停策略</button></div></div><div class="grid strategy-layout"><div class="card"><div class="card-head"><h2>策略参数</h2><span class="sub">参数仅影响演示状态</span></div><div class="form-grid"><div class="field"><label>演示品种</label><select class="select" id="asset"><option>沪深300股指 · IF2503</option><option>螺纹钢 · RB2505</option><option>黄金 · AU2506</option><option>原油 · SC2503</option></select></div><div class="field"><label>K 线周期</label><select id="strategyTimeframe" class="select"><option>5 分钟</option><option>15 分钟</option><option>日线</option></select></div><div class="field"><label>均线类型</label><select class="select" id="maType"><option>EMA 指数移动平均</option><option>SMA 简单移动平均</option></select></div><div class="field"><label>快线周期</label><input id="fast" type="number" min="2" max="50" value="9"><small>建议 2–50 根 bar</small></div><div class="field"><label>慢线周期</label><input id="slow" type="number" min="5" max="200" value="21"><small>必须大于快线周期</small></div><div class="field"><label>信号确认</label><select class="select"><option>收盘确认</option><option>连续 2 根确认</option></select></div></div><div class="section-title">技术指标过滤（可选）</div><div class="form-grid"><label class="checkline"><input type="checkbox" id="rsiOn" checked> RSI 超买/超卖过滤</label><div class="field"><label>RSI 周期 / 阈值</label><input id="strategyRsiParams" type="text" value="14 · 30 / 70"></div><label class="checkline"><input type="checkbox" id="macdOn"> MACD 方向确认</label><div class="field"><label>MACD 参数</label><input id="strategyMacdParams" type="text" value="12 / 26 / 9"></div><label class="checkline"><input type="checkbox" id="bbOn"> 布林带区间过滤</label><div class="field"><label>周期 / 倍数</label><input id="strategyBbParams" type="text" value="20 · 2.0σ"></div><label class="checkline"><input type="checkbox" id="atrOn"> ATR 波动过滤</label><div class="field"><label>ATR 周期</label><input id="strategyAtrPeriod" type="number" value="14"></div></div><div class="section-title">仿真风险参数</div><div class="form-grid"><div class="field"><label>虚拟初始资金</label><input type="text" value="¥ 1,000,000"></div><div class="field"><label>每笔风险预算</label><input type="text" value="1.0%"></div><div class="field"><label>最大回撤停机线</label><input type="text" value="5.0%"></div><div class="field"><label>费用 / 滑点模型</label><select class="select"><option>演示估算 · 固定费率</option><option>自定义费率</option></select></div></div><div style="display:flex;gap:8px;margin-top:18px"><button class="btn primary" id="applyParams">应用演示参数</button><span class="sub" id="paramMsg" style="align-self:center"></span></div></div>
@@ -91,5 +119,5 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function loadTrades(){try{const r=await fetch('/api/trading/trades');const data=await r.json();if(!r.ok)throw Error(data.error||'无法读取交易账本');tradeData=data;document.getElementById('tradeCount').textContent=`${tradeData.length} 笔 · 服务端账本`;renderTrades();}catch(e){document.getElementById('tradeCount').textContent='服务未连接';document.getElementById('tradeRows').innerHTML=`<tr><td colspan="9" class="empty">${esc(e.message)}。请启动本地服务。</td></tr>`;}}
 function renderTrades(){const f=document.getElementById('tradeFilter').value;const rows=tradeData.filter(t=>f==='all'||(f==='long'&&['long','做多'].includes(t.side))||(f==='short'&&['short','做空'].includes(t.side)));document.getElementById('tradeRows').innerHTML=rows.length?rows.map(t=>`<tr><td class="muted">${esc(t.id)}</td><td class="symbol">${esc(t.symbol||'—')}</td><td>${esc(['long','做多'].includes(t.side)?'做多':'做空')}</td><td>${esc(t.entryTime||'—')} / ${money(t.entryPrice)}</td><td>${esc(t.exitTime||'—')} / ${money(t.exitPrice)}</td><td>${esc(t.qty)}</td><td>${money(t.fees)}</td><td class="${t.netPnl>=0?'positive':'negative'}">${money(t.netPnl)}</td><td>${esc(t.entryReason||'—')} / ${esc(t.exitReason||'持仓中')}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">暂无符合条件的模拟成交</td></tr>';}
 document.getElementById('tradeFilter').addEventListener('change',renderTrades);document.getElementById('exportBtn').addEventListener('click',()=>{const rows=[['ID','品种','方向','开仓时间','开仓价','平仓时间','平仓价','手数','费用','净盈亏','入场原因','退出原因'],...tradeData.map(t=>[t.id,t.symbol,t.side,t.entryTime,t.entryPrice,t.exitTime,t.exitPrice,t.qty,t.fees,t.netPnl,t.entryReason,t.exitReason])];const csv='\ufeff'+rows.map(r=>r.map(x=>'"'+String(x??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='paper-trades.csv';a.click();URL.revokeObjectURL(a.href)});loadTrades();
-</script><script src="vendor/klinecharts.min.js"></script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/kline-core.js"></script><script src="js/live.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
+</script><script src="vendor/klinecharts.min.js"></script><script src="js/kline-core.js"></script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/live.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
 </body></html>

@@ -201,7 +201,7 @@
       ? `当前图表是 <b>${esc(chartSymbol)}</b>，而最近的成交属于 <b>${esc(other.symbol)}</b>，两者不是同一段行情。`
       : '当前图表的时间范围内没有成交点。';
     box.style.display = 'block';
-    box.innerHTML = `${why}模拟盘用的是导入的 CSV 行情，与实时源各走各的。`
+    box.innerHTML = `${why}模拟盘的行情是一次性回放的区间数据（演示合成或 CTP 采集），与实时源各走各的。`
       + (runId ? `<br><button class="btn" id="alignBtn" style="margin-top:8px">载入该次运行的行情并对齐买卖点</button>` : '');
     const btn = $('alignBtn');
     if (btn) btn.addEventListener('click', () => alignRun(runId));
