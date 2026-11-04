@@ -179,6 +179,8 @@ class TradingSession:
         self.max_drawdown_pct = 0.0
         self.current_time: str | None = None
         self.last_message = "模拟回放已创建，等待逐 bar 推进。"
+        # 行情来源等展示用元信息（区间模拟用来记录来源与交易日），不影响撮合
+        self.meta: dict = {}
 
     # -- 序列化 ------------------------------------------------------------
     def market_data(self) -> dict:
@@ -196,6 +198,7 @@ class TradingSession:
             "equity": self.equity, "peakEquity": self.peak_equity, "maxDrawdownPct": self.max_drawdown_pct,
             "currentTime": self.current_time, "lastMessage": self.last_message,
             "tradePrefix": self.trade_prefix, "curveLimit": self.curve_limit,
+            "sourceMeta": self.meta,
         }
 
     @classmethod
@@ -216,6 +219,7 @@ class TradingSession:
                     "maxDrawdownPct", "currentTime", "lastMessage"):
             if key in state:
                 setattr(session, key, state[key])
+        session.meta = state.get("sourceMeta") or {}
         return session
 
     # -- 撮合 --------------------------------------------------------------

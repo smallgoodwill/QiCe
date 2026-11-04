@@ -317,8 +317,100 @@ def check_http_chain() -> None:
     check("删除后再取该运行返回 404", status == 404)
 
 
+def check_simulate() -> None:
+    section("3. 区间模拟：策略 + 时间段 → 买卖点 / 逐笔盈亏 / 按日汇总")
+    status, options = call("GET", "/api/simulate/options")
+    check("GET /api/simulate/options 返回行情来源与默认参数",
+          status == 200
+          and {item["id"] for item in options.get("sources", [])} == {"demo", "live"}
+          and options.get("maxDays", 0) >= 1
+          and options.get("defaults", {}).get("source") in ("demo", "live"),
+          f"默认来源={options.get('defaults', {}).get('source')}, 上限={options.get('maxDays')} 个交易日")
+
+    status, result = call("POST", "/api/simulate", {"source": "demo", "days": 3, "config": CONFIG})
+    ok = status == 201 and isinstance(result, dict)
+    check("POST /api/simulate 一次跑完并返回 201", ok,
+          f"{result.get('barCount')} 根 bar" if ok else f"status={status} body={result}")
+    if not ok:
+        return
+
+    summary = result.get("summary", {})
+    check("区间模拟摘要字段完整",
+          {"netPnl", "returnPct", "winRatePct", "maxDrawdownPct", "tradeCount",
+           "profitFactor", "feesTotal", "avgHoldMinutes", "expectancy"} <= set(summary),
+          f"{summary.get('tradeCount')} 笔 · 净盈亏 {summary.get('netPnl')}")
+    check("行情来源与声明随结果返回",
+          result.get("source", {}).get("kind") == "demo" and bool(result.get("notice")))
+    check("结果带区间首尾时间与 bar 数",
+          bool(result.get("startTime")) and bool(result.get("endTime")) and result.get("barCount", 0) >= 240,
+          f"{result.get('barCount')} 根")
+
+    trades = result.get("trades", [])
+    check("逐笔成交包含开平仓时间、价格、持仓时长与盈亏",
+          bool(trades) and all({"entryTime", "exitTime", "entryPrice", "exitPrice",
+                                "holdMinutes", "holdLabel", "netPnl", "fees", "exitReason"} <= set(t)
+                               for t in trades),
+          f"{len(trades)} 笔")
+    check("买卖点价格为正且开仓早于平仓",
+          all(t["entryPrice"] > 0 and t["exitPrice"] > 0 and t["entryTime"] < t["exitTime"]
+              for t in trades))
+    check("每笔成交带持仓期间的最大浮盈/浮亏",
+          all(t.get("mfePct") is not None and t.get("maePct") is not None for t in trades))
+
+    daily = result.get("daily", [])
+    daily_net = round(sum(day["netPnl"] for day in daily), 2)
+    check("按交易日汇总的盈亏之和等于区间总盈亏",
+          bool(daily) and abs(daily_net - round(summary.get("netPnl", 0), 2)) < 0.01,
+          f"按日 {daily_net} / 合计 {summary.get('netPnl')}")
+    check("权益曲线含策略与买入持有基准",
+          bool(result.get("curve")) and {"equity", "benchmark"} <= set(result["curve"][0]),
+          f"{len(result.get('curve', []))} 点")
+
+    run_id = result.get("runId")
+    status, reloaded = call("GET", f"/api/simulate/{run_id}")
+    check("GET /api/simulate/<id> 能取回同一条模拟并复现盈亏",
+          status == 200 and reloaded.get("summary", {}).get("netPnl") == summary.get("netPnl"),
+          f"runId={str(run_id)[:8]}")
+    status, history = call("GET", "/api/simulate/history")
+    check("GET /api/simulate/history 列出区间模拟记录",
+          status == 200 and any(item.get("runId") == run_id for item in history),
+          f"{len(history)} 条")
+
+    # 固定历史区间重跑：demo 行情按日期确定性生成，结果必须逐笔一致
+    import datetime
+    end_day = datetime.date.today() - datetime.timedelta(days=6)
+    start_day = end_day - datetime.timedelta(days=4)
+    window = {"source": "demo", "start": start_day.isoformat(), "end": end_day.isoformat(), "config": CONFIG}
+    status, first = call("POST", "/api/simulate", window)
+    status2, second = call("POST", "/api/simulate", window)
+    check("同一历史区间两次模拟结果完全一致（行情可复现）",
+          status == 201 and status2 == 201
+          and [round(t["netPnl"], 2) for t in first.get("trades", [])]
+          == [round(t["netPnl"], 2) for t in second.get("trades", [])],
+          f"{first.get('barCount')} 根 bar · {len(first.get('trades', []))} 笔")
+
+    status, body = call("POST", "/api/simulate", {"source": "live", "days": 3, "config": CONFIG})
+    check("真实来源无采集数据时给出可执行的提示",
+          status == 400 and "至少需要" in str(body.get("error", "")),
+          str(body.get("error", ""))[:60])
+
+    status, body = call("POST", "/api/simulate", {"source": "unknown", "days": 3, "config": CONFIG})
+    check("未知行情来源返回 400", status == 400)
+
+    status, body = call("POST", "/api/simulate", {
+        "source": "demo", "start": "2026-01-01", "end": "2026-11-04", "config": CONFIG})
+    check("区间超过单次上限返回 400", status == 400, str(body.get("error", ""))[:40])
+
+    status, body = call("POST", "/api/simulate", {
+        "source": "demo", "days": 3, "strategyId": "not-exist", "config": CONFIG})
+    check("引用不存在的策略返回 400", status == 400)
+
+    status, _ = call("GET", "/api/simulate/not-exist-run")
+    check("不存在的模拟记录返回 404", status == 404)
+
+
 def check_live_feed() -> None:
-    section("3. 实时行情：聚合口径 / 接口 / SSE 推流")
+    section("4. 实时行情：聚合口径 / 接口 / SSE 推流")
     status, body = call("GET", "/api/live/status")
     check("GET /api/live/status 可用", status == 200 and "driver" in body, f"status={status}")
     check("初始状态未启动采集", body.get("running") is False)
@@ -385,7 +477,7 @@ def check_live_feed() -> None:
 
 
 def check_security() -> None:
-    section("4. 安全回归：密钥泄露 / 目录穿越 / 跨站请求")
+    section("5. 安全回归：密钥泄露 / 目录穿越 / 跨站请求")
     for path in ("/.env", "/../.env", "/%2e%2e/.env", "/js/../.env",
                  "/.git/config", "/.venv/pyvenv.cfg", "/app/server.py",
                  "/requirements.txt", "/data/runtime/qice.sqlite3"):
@@ -435,6 +527,7 @@ def main() -> int:
         PORT = int(args.external.rsplit(":", 1)[-1].strip("/"))
         print(f"目标：{args.external}（复用现有服务，会写入该服务的数据目录）")
         check_http_chain()
+        check_simulate()
         check_live_feed()
         check_security()
     else:
@@ -458,6 +551,7 @@ def main() -> int:
                 print(output[-3000:])
                 return 1
             check_http_chain()
+            check_simulate()
             check_live_feed()
             check_security()
         finally:

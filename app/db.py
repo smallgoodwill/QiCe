@@ -280,3 +280,31 @@ def recent_live_bars(symbol: str, limit: int = 500, source: str | None = "ctp") 
     return [{"timestamp": row["ts"], "open": row["open"], "high": row["high"],
              "low": row["low"], "close": row["close"], "volume": row["volume"]}
             for row in reversed(rows)]
+
+
+def live_bars_range(symbol: str, start_ts: str, end_ts: str,
+                    source: str = "ctp", limit: int = 20_000) -> list[dict]:
+    """按时间区间取已落库的分钟 bar（升序）。
+
+    区间边界用 ISO 字符串直接比较：库里 ts 统一带 +08:00 时区后缀，
+    同格式字符串的字典序等价于时间序，省掉一次解析开销。
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT ts,open,high,low,close,volume FROM live_bars
+               WHERE symbol=? AND source=? AND ts>=? AND ts<=?
+               ORDER BY ts LIMIT ?""",
+            (symbol, source, start_ts, end_ts, limit)).fetchall()
+    return [{"timestamp": row["ts"], "open": row["open"], "high": row["high"],
+             "low": row["low"], "close": row["close"], "volume": row["volume"]}
+            for row in rows]
+
+
+def live_bar_sources() -> list[dict]:
+    """各行情源/合约的采集概况，供"真实行情"下拉与可用性提示使用。"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT source, symbol, COUNT(*) AS n, MIN(ts) AS start_ts, MAX(ts) AS end_ts
+               FROM live_bars GROUP BY source, symbol ORDER BY symbol, source""").fetchall()
+    return [{"source": row["source"], "symbol": row["symbol"], "count": row["n"],
+             "startTime": row["start_ts"], "endTime": row["end_ts"]} for row in rows]

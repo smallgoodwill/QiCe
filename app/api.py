@@ -21,7 +21,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, ai, backtest, config, db, engine, feed, marketdata, simnow, trading, views
+from . import (__version__, ai, backtest, config, db, engine, feed, marketdata, simnow,
+               simulate, trading, views)
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,15 @@ class Handler(BaseHTTPRequestHandler):
             bars = marketdata.sample_bars()
             return 200, {"name": config.SAMPLE_CSV.name, "bars": bars, "count": len(bars),
                          "notice": "内置合成演示行情，仅用于跑通流程，不代表任何真实品种走势。"}
+        if path == "/api/simulate/options":
+            return 200, simulate.options()
+        if path == "/api/simulate/history":
+            return 200, simulate.history()
+        if path.startswith("/api/simulate/"):
+            try:
+                return 200, simulate.get(unquote(path.rsplit("/", 1)[-1]))
+            except ValueError as exc:
+                raise ApiError(404, str(exc)) from None
         raise ApiError(404, "未知 API 路径。")
 
     # ---- 写接口 ----------------------------------------------------------
@@ -310,6 +320,8 @@ class Handler(BaseHTTPRequestHandler):
             result = backtest.run_backtest(self._read_json())
             db.save_backtest(result)
             return 201, result
+        if path == "/api/simulate":
+            return 201, self._simulate(self._read_json())
         if path == "/api/trading/runs":
             return 201, self._create_run(self._read_json())
         if path.startswith("/api/trading/runs/"):
@@ -351,6 +363,22 @@ class Handler(BaseHTTPRequestHandler):
             if existing:
                 payload["createdAt"] = existing.get("createdAt")
         return db.save_strategy(payload)
+
+    @staticmethod
+    def _simulate(body: dict) -> dict:
+        """策略区间模拟：一次跑完并落库，返回买卖点、逐笔盈亏与按日汇总。"""
+        strategy_id = str(body.get("strategyId") or "").strip()
+        strategy = None
+        if strategy_id:
+            strategy = db.get_strategy(strategy_id)
+            if not strategy:
+                raise ApiError(400, "所选策略不存在，请刷新策略库后重试。")
+        with STORE_LOCK:
+            result = simulate.run(body, strategy)
+        logger.info("区间模拟 %s（策略 %s，%d 根 bar，%d 笔成交）",
+                    result["runId"], result["strategyName"], result["barCount"],
+                    len(result["trades"]))
+        return result
 
     @staticmethod
     def _create_run(body: dict) -> dict:
@@ -403,8 +431,9 @@ class Handler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type.endswith(("javascript", "json")):
             content_type += "; charset=utf-8"
-        self._send(target.read_bytes(), 200, content_type,
-                   cache="no-cache" if target.suffix.lower() == ".html" else "public, max-age=60")
+        # 本地服务不做 CDN 缓存：改完前端代码刷新就要生效，
+        # 否则浏览器会拿 max-age 里的旧 JS，页面表现和源码对不上（排查成本极高）。
+        self._send(target.read_bytes(), 200, content_type, cache="no-cache")
 
 
 def _port_taken(host: str, port: int) -> bool:
