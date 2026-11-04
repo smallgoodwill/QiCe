@@ -1,65 +1,188 @@
-# 期策：本地期货量化纸面模拟平台
+# 期策 · 本地期货量化纸面模拟平台
 
-当前版本是可运行的本地项目，数据链路为浏览器 → Python 本机 API → SQLite。模拟交易包含 CSV 历史回放；另外提供可选 SimNow CTP 测试环境连接和实时行情订阅。实时策略下单目前尚未开放。
+一个可以完整跑通的量化 demo：**导入行情 → 建策略 → 回测 → 模拟盘逐 bar 回放 → 仪表盘 / 诊断 / 问答**，全部落库在本地 SQLite，浏览器只做展示与交互。
 
-## 启动
+不接券商、不发真实委托、不接实时行情（实时行情仅作为可选的 SimNow/CTP 只读连接）。
 
-需要 Python 3.13（项目已在当前 Windows/Python 3.13 环境安装 CTP wheel）。首次安装依赖：
+---
 
-```powershell
-Set-Location outputs
-Set-ExecutionPolicy -Scope Process Bypass
-.\install.ps1
-```
-
-编辑 `outputs/.env` 填入自己的配置后启动：
+## 快速开始
 
 ```powershell
-.\run.ps1
+# 1) 首次安装（创建 .venv，只装 python-dotenv 一个必需依赖）
+.\scripts\install.ps1
+
+# 2) 编辑 .env 填入 API Key / SimNow 账号（AI 问答与 CTP 都可留空，其余功能照常可用）
+notepad .env
+
+# 3) 启动
+.\scripts\run.ps1
 ```
 
-浏览器打开 `http://127.0.0.1:8765`。服务仅绑定本机回环地址。运行状态可查看 `http://127.0.0.1:8765/api/health`。停止服务按 `Ctrl+C`。
+浏览器打开 <http://127.0.0.1:8765>。健康检查：<http://127.0.0.1:8765/api/health>。`Ctrl+C` 停止。
 
-## 本机密钥和账号配置
+**没有任何行情数据也能立刻跑通全链路**：回测页和交易页都有「载入内置样例行情」按钮，用的是 `data/samples/sample_5m_synthetic.csv`（240 根合成 5 分钟 bar，明确标注非真实行情）。
 
-配置文件：[outputs/.env](.env)。变量模板见 [outputs/.env.example](.env.example)。文件已加入 `.gitignore`，但内容是本机明文，请勿上传、截图或放进共享目录。服务启动时读取一次；修改后需重启服务。
+### 全链路自检
 
-需要填写：
+```powershell
+.\scripts\smoke_test.ps1
+```
 
-- `AI_PROVIDER`：默认问答服务商，填写 `deepseek` 或 `glm`；默认 `deepseek`。
-- `DEEPSEEK_API_KEY`：DeepSeek API Key。
-- `DEEPSEEK_MODEL`：DeepSeek 模型，默认 `deepseek-flash`，也可用 `deepseek-v4-pro`。模型名称以 DeepSeek 当前官方文档为准。
-- `GLM_API_KEY`：选用 GLM 时填写。聊天里曾经贴出的旧 Key 应先在 GLM 控制台撤销，再填新 Key。
-- `SIMNOW_USERNAME`、`SIMNOW_PASSWORD`：SimNow 模拟账号和密码。
-- `SIMNOW_BROKER_ID`、`SIMNOW_MD_ADDRESS`、`SIMNOW_TD_ADDRESS`：从 SimNow 当前控制台复制的经纪商代码、行情前置和交易前置。
-- `SIMNOW_APP_ID`、`SIMNOW_AUTH_CODE`、`SIMNOW_PRODUCT_INFO`：控制台提供时填写；AppID 会映射到 CTP 的“产品名称”。
-- `GLM_MODEL`：选用 GLM 时的模型，默认 `glm-5`。
+它会另起一个临时服务进程（`QICE_DATA_DIR` 指向系统临时目录，**不碰真实账本**），把 55 项断言跑一遍：引擎不变量、建策略、回测、逐 bar 推进模拟盘、仪表盘、诊断、问答状态、以及密钥泄露 / 目录穿越 / 跨站请求四类安全回归。
 
-DeepSeek 接口采用官方 OpenAI 兼容 Chat Completions 地址 `https://api.deepseek.com/chat/completions`。官方当前提供 `deepseek-flash` 和 `deepseek-v4-pro` 等模型；模型标识可能调整，详见 [DeepSeek API 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 和 [模型列表](https://api-docs.deepseek.com/api/list-models/)。
+命令行也能单独回放（与网页端共用同一个引擎，结果必然一致）：
 
-连接表单也可临时提交账号/密码；服务不会将表单内容写入 `.env` 或数据库。若配置了环境变量，表单留空时会使用 `.env` 中的值。
+```powershell
+python .\scripts\replay.py data\samples\sample_5m_synthetic.csv --fast 9 --slow 21
+```
 
-## 当前页面和数据链路
+---
 
-- **我的策略库：**通过 API 创建、详细查看、编辑、删除策略；新建/编辑表单弹窗显示参数。参数保存在 SQLite。
-- **策略回测：**必须导入 CSV；服务端校验行情和参数、计算回测并保存可查询的结果。浏览器与后端断开时不会本地伪算。
-- **交易：**从策略库选择策略并启动模拟运行；每条策略拥有独立账户和账本，最多同时运行 10 条。可分别取消；有持仓时按最后处理 bar 收盘价模拟平仓。行情逐 bar 推进，浏览器保持打开时自动运行。
-- **SimNow 实时行情：**交易页可使用 `.env` 中的 SimNow 测试环境账号和前置地址，填写合约并查看实时 tick。当前只连接和订阅行情，不会发送委托。CTP 凭据不写入数据库；`.env` 会在服务进程退出后仍留在本机磁盘。请勿把服务暴露到公网。
-- **仪表盘、交易清单、品种诊断、每日诊断：**从服务端保存的策略运行记录读取；无数据时显示空状态。
-- **智能问答：**可选 GLM 或 DeepSeek。它能解释策略、指标和当前模拟盘上下文，不生成策略或代码，也不提供买卖建议。DeepSeek 默认使用官方 OpenAI 兼容 Chat Completions 接口。
+## 目录结构
+
+```
+.
+├─ app/                      后端（纯标准库 + python-dotenv）
+│  ├─ config.py              路径、常量、.env 载入（唯一读取配置的地方）
+│  ├─ engine.py            ★ 统一策略引擎：行情校验 + 参数归一 + 信号判定 + 撮合记账
+│  ├─ indicators.py          纯函数指标（SMA / EMA / ATR / RSI）
+│  ├─ backtest.py            回测编排（训练/测试切分、指标汇总）
+│  ├─ trading.py             多策略模拟运行（逐 bar 推进、状态视图）
+│  ├─ db.py                  SQLite 持久化（策略 / 回测 / 模拟运行）
+│  ├─ views.py               仪表盘与诊断的聚合视图
+│  ├─ ai.py                  DeepSeek / GLM 问答（Key 只在服务端）
+│  ├─ simnow.py              可选 SimNow(CTP) 行情网关（惰性导入 vn.py）
+│  ├─ api.py                 HTTP 路由 + 静态资源白名单 + 来源校验
+│  └─ server.py              进程入口（日志、绑定端口、优雅退出）
+├─ web/                      前端（服务端只从这里读静态文件）
+│  ├─ index.html             单页壳 + 样式 + 通用脚本
+│  └─ js/{backtest,strategy-library,trading,dashboard,assistant}.js
+├─ data/
+│  ├─ samples/               内置合成样例行情
+│  ├─ legacy/                旧版 JSON 备份（未自动导入，数据源无法核实）
+│  └─ runtime/               SQLite 账本与日志（git 忽略）
+├─ docs/                     产品方案、策略与运行说明
+├─ scripts/
+│  ├─ install.ps1            建 .venv + 装依赖（-WithCtp 额外装 CTP 网关）
+│  ├─ run.ps1                启动服务（-Port / -Verbose）
+│  ├─ smoke_test.ps1/.py     全链路自检
+│  └─ replay.py              命令行回放（复用 app.engine）
+├─ requirements.txt          运行期必需依赖（只有 python-dotenv）
+├─ requirements-ctp.txt      可选：vnpy + vnpy_ctp
+└─ .env.example              配置模板
+```
+
+---
+
+## 配置（.env）
+
+`.env` 是本机明文，已加入 `.gitignore`，**不要截图或放进共享目录**。服务启动时读取一次，改完需重启。
+
+| 变量 | 说明 |
+| --- | --- |
+| `AI_PROVIDER` | `deepseek`（默认）或 `glm` |
+| `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` | DeepSeek Key 与模型（默认 `deepseek-flash`） |
+| `GLM_API_KEY` / `GLM_MODEL` | 选用 GLM 时填写（默认 `glm-5`） |
+| `SIMNOW_USERNAME` / `SIMNOW_PASSWORD` | SimNow 模拟账号 |
+| `SIMNOW_BROKER_ID` / `SIMNOW_MD_ADDRESS` / `SIMNOW_TD_ADDRESS` | 经纪商代码、行情前置、交易前置 |
+| `SIMNOW_APP_ID` / `SIMNOW_AUTH_CODE` / `SIMNOW_PRODUCT_INFO` | 控制台提供时填写 |
+
+DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completions`，模型标识可能调整，以官方文档为准。
+
+也可以完全不写 `.env`：在「智能问答」页临时填 Key（只存服务进程内存，重启即失效），SimNow 账号同理可在「交易」页临时填。
+
+---
+
+## 页面与数据链路
+
+| 页面 | 行为 | 写入位置 |
+| --- | --- | --- |
+| 总览仪表盘 | 策略数、模拟权益、已实现盈亏、最近回测、权益曲线、最近成交 | 读 `trading_runs` / `backtests` |
+| 我的策略库 | 新建 / 详细 / 编辑 / 删除策略 | `strategies` |
+| 策略回测 | 导入 CSV → 服务端校验并回测 → 保存结果、曲线、逐笔、分段统计 | `backtests` |
+| 交易 | 从策略库选策略 + 导入 CSV → 启动模拟运行，逐 bar 自动推进 | `trading_runs` |
+| 品种 / 每日诊断 | 基于当前回放的真实行情与成交算 ATR、胜率、回撤、当日信号 | 读 `trading_runs` |
+| 交易清单 | 汇总所有运行的模拟成交，可导出 CSV | 读 `trading_runs` |
+| 智能问答 | 解释策略 / 指标 / 当前模拟盘状态，不给买卖建议 | 不落库 |
+
+### 业务口径（改代码要同步改这里和页面文案）
+
+- **信号在 bar 收盘确认，下一根 bar 开盘价加减滑点成交**，绝不在信号当根成交。
+- 回测在训练/测试切分点**强制平仓**，训练段盈亏不带入测试段。
+- 手续费按「每边每手」计，一手来回记两次；`atrMaxPct` 对外用百分数（`0.4` = 0.4%），内部换算成小数。
+- 模拟盘每根 bar 只做一件事：用**上一根已收盘 bar** 的信号，在**当前 bar 开盘**撮合。回测就是循环调 `advance()`，模拟盘就是每次 HTTP 请求调一次 —— 所以两者结果必然一致。
+
+---
+
+## API 一览
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/health` | 健康检查 + 计数 |
+| GET | `/api/market/sample` | 内置合成行情 |
+| GET/POST | `/api/strategies` | 策略列表 / 新建或更新 |
+| DELETE | `/api/strategies/<id>` | 删除策略 |
+| GET/POST | `/api/backtests` | 回测列表 / 运行并保存 |
+| GET | `/api/backtests/<id>` | 单次回测完整结果 |
+| GET/POST | `/api/trading/runs` | 运行列表 / 启动运行 |
+| GET | `/api/trading/runs/<id>` | 单条运行快照 |
+| POST | `/api/trading/runs/<id>/{step,cancel,pause,resume}` | 推进 / 取消 / 暂停 / 继续 |
+| DELETE | `/api/trading/runs/<id>` | 删除已完成或已取消的运行 |
+| GET | `/api/trading/trades` | 所有运行的模拟成交 |
+| GET | `/api/dashboard` · `/api/diagnostics` | 仪表盘 / 诊断 |
+| GET | `/api/ai/status` · POST `/api/ai/config` · POST `/api/ai/chat` | 问答 |
+
+---
 
 ## 行情 CSV
 
-需要 CSV 表头：`timestamp,open,high,low,close,volume`。可选 `event_blackout` 字段，值为 `1/true/yes` 时该 bar 标记为禁入。时间需能被 Python ISO 日期解析，严格递增且无重复；OHLC 合法；支持 30 至 20,000 根 bar。建议统一使用 5 分钟 bar、单一合约、同一时区，并检查夜盘/午休时段缺口与合约换月。不要上传无授权行情。
+必需表头 `timestamp,open,high,low,close,volume`，可选 `event_blackout`（`1/true/yes` 标记该 bar 事件禁入）。
 
-CSV 由浏览器发送给本机服务端进行回测或模拟盘计算，不会转发给 GLM。当前模拟撮合为简化模型，不涵盖真实盘口、部分成交、保证金、涨跌停、交易所费率细则和换月。
+- 时间需能被 ISO 8601 解析（如 `2025-02-17T09:00:00+08:00`），**严格递增且不重复**；
+- `low ≤ min(open, close) ≤ max(open, close) ≤ high`，数值必须有限，成交量非负；
+- 支持 30 – 20,000 根 bar；
+- 建议单一合约、统一时区、统一周期，并自行核对夜盘/午休缺口与换月。
 
-## 持久化与旧文件
+---
 
-新数据位于 `work/runtime/qice.sqlite3`，由 SQLite WAL 模式管理。关闭服务不会清除策略、回测结果或模拟盘状态。旧的 `strategies.json`、`backtests.json` 文件保留作历史备份，不自动迁入，因为旧回测数据源无法核实。需要清理或重置时请先备份数据库文件；当前页面提供模拟盘重置，但不提供全库清空按钮。
+## 安全边界
 
-安装脚本使用 Python 3.13 对应的 `vnpy_ctp` 6.7.11.4 Windows wheel，并跳过可选桌面 GUI 依赖。连接代码使用 `CtpGateway`（CTP），不是 `CtptestGateway`（CTPTEST）。SimNow 普通仿真账号使用 CTP API“实盘”协议模式完成握手；这不会把 SimNow 模拟账号变成实盘账号。只有期货公司明确要求 CTP 穿透式测试时才应使用 CTPTEST/测试模式。若换 Python 版本或操作系统，需按 [vnpy_ctp 安装说明](https://github.com/vnpy/vnpy_ctp)安装对应原生组件。
+本项目虽然只监听 `127.0.0.1`，但浏览器里的任意网页都能向本机端口发请求，因此做了三层防护：
 
-## 后续进入实时模拟策略交易前
+1. **静态根固定为 `web/`**，且只放行白名单后缀；任何以 `.` 开头的路径（`.env` / `.venv` / `.git`）一律 404。旧实现把项目根当静态根，`GET /.env` 能直接下载到 API Key 和 SimNow 密码。
+2. **来源校验**：校验 `Host`（防 DNS rebinding）与 `Origin`（防跨站）。
+3. **写操作强制 `Content-Type: application/json`**，跨站表单/图片等简单请求无法伪造该头。
 
-还需实现 5 分钟 bar 聚合、策略触发、委托/成交/持仓状态机、断线重连及柜台对账，再开放 SimNow 测试单操作。实时行情连接成功不等同于策略启动或委托成功。该功能不接真实券商，不构成交易建议或收益承诺。
+API Key 只在服务端使用，`/api/ai/status` 只回传「是否已配置」，永不回传 Key 本身。
+
+---
+
+## 已知边界（不要高估结果）
+
+- 只做**单品种、只做多、固定手数**的简化撮合；不模拟保证金、涨跌停、换月、交易时段、盘口冲击、部分成交与真实交易所费率细则。
+- 回测/模拟结果**不代表未来表现**，也不构成任何投资建议。
+- 智能问答只解释规则与指标，不生成策略、不预测收益。
+- SimNow 连接目前**只连接与订阅行情，不会发送任何委托**。要进入实时策略交易，还需补 5 分钟 bar 聚合、委托/成交/持仓状态机、断线重连与柜台对账。
+
+---
+
+## 本次重构做了什么
+
+| 类别 | 变更 |
+| --- | --- |
+| 目录 | `outputs/` 平铺结构拆分为 `app/ web/ data/ docs/ scripts/`；删除旧单文件版 `server.py`、`paper.js` 与 pip 临时缓存 |
+| 引擎 | 回测与模拟盘原本是**两套独立实现**，已合并为 `app/engine.py` 一条撮合路径。修复了旧回测的 `fast_line[sig-1]` 负索引回绕（会凭空产生"幽灵金叉"）与切分点跳 bar 问题 |
+| Bug | `POST /api/trading/runs/<id>/step` 路由分段数判断错误，导致**模拟盘永远不推进**；诊断接口读了不含行情的状态快照，导致**永远显示"没有可分析数据"**；交易清单页引用不存在的元素导致整页脚本中断；SimNow 表单缺「交易前置地址」导致连接按钮直接抛错 |
+| 安全 | 修复 `GET /.env` 可下载真实密钥；改为静态白名单 + 拒绝 dotfile + Host/Origin 校验 + 强制 JSON |
+| 一致性 | `scripts/replay.py` 不再自带一份引擎（原 ATR 口径用 EMA，与网页端 SMA 不一致），改为复用 `app.engine` |
+| 依赖 | 移除代码完全未引用的 `numpy / pandas / ta-lib / loguru / tzlocal`，运行期仅需 `python-dotenv` |
+| 自检 | 新增 `scripts/smoke_test.py`：55 项断言覆盖全链路 + 安全回归，跑在临时数据目录上 |
+
+安装 CTP 网关（可选，仅 Windows x64 + Python 3.13 有官方 wheel）：
+
+```powershell
+.\scripts\install.ps1 -WithCtp
+```
+
+连接使用 `CtpGateway`（CTP），不是 `CtptestGateway`（CTPTEST）。SimNow 普通仿真账号用 CTP 的「实盘」协议模式握手，这不改变账号类型。
