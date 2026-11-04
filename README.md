@@ -8,6 +8,10 @@
 
 ## 快速开始
 
+最简单的方式：**双击项目根目录的 `run.bat`**。首次运行会自动装好 `.venv`，然后起服务并自动打开浏览器（`Ctrl+C` 停止）。想换端口就直接带参数：`run.bat 9000`。
+
+命令行方式：
+
 ```powershell
 # 1) 首次安装（创建 .venv，只装 python-dotenv 一个必需依赖）
 .\scripts\install.ps1
@@ -15,11 +19,13 @@
 # 2) 编辑 .env 填入 API Key / SimNow 账号（AI 问答与 CTP 都可留空，其余功能照常可用）
 notepad .env
 
-# 3) 启动
+# 3) 启动（-Port 9000 换端口，-NoOpen 不自动开浏览器，-Verbose 输出调试日志）
 .\scripts\run.ps1
 ```
 
 浏览器打开 <http://127.0.0.1:8765>。健康检查：<http://127.0.0.1:8765/api/health>。`Ctrl+C` 停止。
+
+> 端口已被占用时会直接报错退出，不会静默复用端口（Windows 上 `SO_REUSEADDR` 允许两个实例绑同一端口，会导致请求随机落到不同数据库连接，这里已显式挡住）。
 
 **没有任何行情数据也能立刻跑通全链路**：回测页和交易页都有「载入内置样例行情」按钮，用的是 `data/samples/sample_5m_synthetic.csv`（240 根合成 5 分钟 bar，明确标注非真实行情）。
 
@@ -43,6 +49,7 @@ python .\scripts\replay.py data\samples\sample_5m_synthetic.csv --fast 9 --slow 
 
 ```
 .
+├─ run.bat                   ★ 一键启动（双击即可；run.bat 9000 换端口）
 ├─ app/                      后端（纯标准库 + python-dotenv）
 │  ├─ config.py              路径、常量、.env 载入（唯一读取配置的地方）
 │  ├─ engine.py            ★ 统一策略引擎：行情校验 + 参数归一 + 信号判定 + 撮合记账

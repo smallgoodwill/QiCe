@@ -6,10 +6,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import threading
+import webbrowser
 from logging.handlers import RotatingFileHandler
 
 from . import __version__, api, config
+
+# 启动后自动开浏览器的开关：设成 1/true/yes 可禁用（CI、无头环境用）
+_NO_OPEN_ENV = "QICE_NO_OPEN"
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -38,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default=config.DEFAULT_HOST, help="监听地址，默认仅本机回环")
     parser.add_argument("--port", type=int, default=config.DEFAULT_PORT, help="监听端口")
     parser.add_argument("--verbose", action="store_true", help="输出调试日志")
+    parser.add_argument("--open", action="store_true",
+                        help="启动后在默认浏览器中打开页面")
     args = parser.parse_args(argv)
 
     setup_logging(args.verbose)
@@ -46,10 +54,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         logger.warning("服务将监听 %s，这会暴露到本机以外。本项目是本地演示环境，请勿公网暴露。", args.host)
 
-    server = api.make_server(args.host, args.port)
-    logger.info("期策 v%s 已启动：http://%s:%s", __version__, args.host, args.port)
+    try:
+        server = api.make_server(args.host, args.port)
+    except OSError as exc:
+        # 端口被占是最常见的启动失败原因，给一条能直接照做的提示
+        logger.error("无法绑定 %s:%s —— %s", args.host, args.port, exc)
+        logger.error("换个端口重试：run.bat 8766   或   python -m app.server --port 8766")
+        return 1
+
+    url = f"http://{args.host}:{args.port}"
+    logger.info("期策 v%s 已启动：%s", __version__, url)
     logger.info("数据目录：%s", config.RUNTIME_DIR)
     logger.info("仅限本机教学演示，按 Ctrl+C 停止。")
+
+    if args.open and os.environ.get(_NO_OPEN_ENV, "").lower() not in ("1", "true", "yes"):
+        # 延迟一点再开，等 serve_forever 真正进入 accept 循环
+        threading.Timer(0.8, webbrowser.open, args=(url,)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

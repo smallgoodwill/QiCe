@@ -11,9 +11,11 @@
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import mimetypes
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
@@ -321,8 +323,28 @@ class Handler(BaseHTTPRequestHandler):
                    cache="no-cache" if target.suffix.lower() == ".html" else "public, max-age=60")
 
 
+def _port_taken(host: str, port: int) -> bool:
+    """探测端口上是否已有进程在监听。
+
+    为什么要单独探一次：Windows 上 `allow_reuse_address=True`（socketserver 默认）
+    实际是 SO_REUSEADDR，其语义等价于 SO_REUSEPORT —— **第二个进程能绑定成功**，
+    于是两个实例各自持有独立 SQLite 连接，请求随机落到其中一个，表现为
+    "刚建的策略时有时无"。这里先主动探测，把这个静默故障变成一条明确报错。
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.3)
+    try:
+        return probe.connect_ex((host, port)) == 0
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def make_server(host: str = config.DEFAULT_HOST, port: int = config.DEFAULT_PORT) -> ThreadingHTTPServer:
     db.initialize()
+    if _port_taken(host, port):
+        raise OSError(errno.EADDRINUSE, f"端口 {host}:{port} 已有进程在监听（是不是已经开着一个实例？）")
     origins = {f"http://{name}:{port}" for name in ("127.0.0.1", "localhost")}
     Handler.allowed_hosts = {f"{name}:{port}" for name in ("127.0.0.1", "localhost")}
     Handler.allowed_origins = origins
