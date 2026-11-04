@@ -69,6 +69,17 @@ def initialize() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_trading_runs_created ON trading_runs(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_trading_runs_status ON trading_runs(status);
+            -- 实时行情落地：只存已收口的 1 分钟 bar，每分钟每合约最多一次写入
+            CREATE TABLE IF NOT EXISTS live_bars (
+                symbol TEXT NOT NULL,
+                ts TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (symbol, ts)
+            );
         """)
         row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         if row is None:
@@ -222,5 +233,28 @@ def stats() -> dict[str, Any]:
             "backtests": scalar("SELECT COUNT(*) FROM backtests"),
             "tradingRuns": scalar("SELECT COUNT(*) FROM trading_runs"),
             "activeRuns": scalar("SELECT COUNT(*) FROM trading_runs WHERE status IN ('running','paused')"),
+            "liveBars": scalar("SELECT COUNT(*) FROM live_bars"),
             "dbPath": str(config.DB_PATH),
         }
+
+
+# --------------------------------------------------------------------------
+# 实时行情 K 线（只存已收口的 bar，未收口的那根由内存聚合器维护）
+# --------------------------------------------------------------------------
+def save_live_bar(symbol: str, bar: dict) -> None:
+    with _connect() as conn:
+        conn.execute("""INSERT INTO live_bars(symbol,ts,open,high,low,close,volume)
+            VALUES(?,?,?,?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET
+            open=excluded.open,high=excluded.high,low=excluded.low,
+            close=excluded.close,volume=excluded.volume""",
+            (symbol, bar["timestamp"], float(bar["open"]), float(bar["high"]),
+             float(bar["low"]), float(bar["close"]), float(bar.get("volume") or 0)))
+
+
+def recent_live_bars(symbol: str, limit: int = 500) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute("""SELECT ts,open,high,low,close,volume FROM live_bars
+            WHERE symbol=? ORDER BY ts DESC LIMIT ?""", (symbol, limit)).fetchall()
+    return [{"timestamp": row["ts"], "open": row["open"], "high": row["high"],
+             "low": row["low"], "close": row["close"], "volume": row["volume"]}
+            for row in reversed(rows)]

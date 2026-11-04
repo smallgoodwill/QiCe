@@ -60,11 +60,13 @@ python .\scripts\replay.py data\samples\sample_5m_synthetic.csv --fast 9 --slow 
 │  ├─ views.py               仪表盘与诊断的聚合视图
 │  ├─ ai.py                  DeepSeek / GLM 问答（Key 只在服务端）
 │  ├─ simnow.py              可选 SimNow(CTP) 行情网关（惰性导入 vn.py）
+│  ├─ feed.py              ★ 实时行情：tick→分钟 bar 聚合 + SSE 广播（ctp / sim 双驱动）
 │  ├─ api.py                 HTTP 路由 + 静态资源白名单 + 来源校验
 │  └─ server.py              进程入口（日志、绑定端口、优雅退出）
 ├─ web/                      前端（服务端只从这里读静态文件）
 │  ├─ index.html             单页壳 + 样式 + 通用脚本
-│  └─ js/{backtest,strategy-library,trading,dashboard,assistant}.js
+│  ├─ js/{backtest,strategy-library,trading,live,dashboard,assistant}.js
+│  └─ vendor/klinecharts.min.js   K 线图表库（9.8.12 UMD，本地化不走 CDN）
 ├─ data/
 │  ├─ samples/               内置合成样例行情
 │  ├─ legacy/                旧版 JSON 备份（未自动导入，数据源无法核实）
@@ -109,6 +111,8 @@ DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completion
 | 我的策略库 | 新建 / 详细 / 编辑 / 删除策略 | `strategies` |
 | 策略回测 | 导入 CSV → 服务端校验并回测 → 保存结果、曲线、逐笔、分段统计 | `backtests` |
 | 交易 | 从策略库选策略 + 导入 CSV → 启动模拟运行，逐 bar 自动推进 | `trading_runs` |
+| 实时 K 线 | CTP(SimNow) 真实行情或内置模拟源 → tick 合成 1/5/15/30/60 分钟 K 线；模拟盘成交以买卖点标在对应价格上 | `live_bars`（仅已收口 bar） |
+
 | 品种 / 每日诊断 | 基于当前回放的真实行情与成交算 ATR、胜率、回撤、当日信号 | 读 `trading_runs` |
 | 交易清单 | 汇总所有运行的模拟成交，可导出 CSV | 读 `trading_runs` |
 | 智能问答 | 解释策略 / 指标 / 当前模拟盘状态，不给买卖建议 | 不落库 |
@@ -139,6 +143,28 @@ DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completion
 | GET | `/api/trading/trades` | 所有运行的模拟成交 |
 | GET | `/api/dashboard` · `/api/diagnostics` | 仪表盘 / 诊断 |
 | GET | `/api/ai/status` · POST `/api/ai/config` · POST `/api/ai/chat` | 问答 |
+| GET | `/api/live/status` | 实时行情源状态（驱动、tick 数、最新价） |
+| GET | `/api/live/bars?symbol=&period=&limit=` | 取 1m/5m/15m/30m/60m K 线 |
+| GET | `/api/live/stream?symbol=` | SSE 推流：`hello` 快照 + 每根 bar 变化 |
+| POST | `/api/live/start` · `/api/live/stop` | 启动 / 停止采集（`driver` 为 `ctp` 或 `sim`） |
+| GET | `/api/trading/runs/<id>/bars` | 取该运行当时的行情，用于 K 线对齐买卖点 |
+
+---
+
+## 实时 K 线
+
+「实时 K 线」页有两种数据源，都在页面上直接切换：
+
+| 数据源 | 前提 | 延迟 | 用途 |
+| --- | --- | --- | --- |
+| **CTP（SimNow）** | `.env` 填好 `SIMNOW_*`，或页面点「连接 SimNow 实时行情」 | tick 级 | 看真实期货行情，**只读订阅、不下单** |
+| **内置模拟源** | 无 | 可调到 120 倍加速 | 没账号或非交易时段时验证链路 |
+
+- **聚合口径**：tick 按北京时间切 1 分钟窗口，累加 O/H/L/C/V；跨分钟先收口上一根再开新根。5/15/30/60 分钟由 1 分钟合成，只在取数时合并，不重复存储。
+- **推送**：SSE（`text/event-stream`），浏览器自带断线重连，服务端 15 秒一次心跳。选 SSE 而不是 WebSocket 是因为只需要单向推送，标准库即可实现、不引入依赖。
+- **落库策略**：只把已收口的 bar 写进 `live_bars`（每分钟每合约最多一次写），正在形成的那根只留在内存，避免高频写盘。
+- **买卖点**：模拟盘的成交按 `entryTime` / `exitTime` 映射到 K 线坐标，买点挂在该根最低价下方、卖点挂在最高价上方，带自动避让与边界收敛。模拟盘跑的是导入的 CSV 行情，与实时源不是同一段数据；页面会给出提示，点一下即可「载入该次运行的行情并对齐」。
+- **注意**：非交易时段 CTP 不会有新 tick；`IF2503` 这类已交割合约也没有行情，请用当月在交易的合约（如 `IF2612`、`rb2601`）。
 
 ---
 

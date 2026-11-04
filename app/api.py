@@ -15,12 +15,13 @@ import errno
 import json
 import logging
 import mimetypes
+import queue as queue_module
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, ai, backtest, config, db, engine, marketdata, simnow, trading, views
+from . import __version__, ai, backtest, config, db, engine, feed, marketdata, simnow, trading, views
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             self._guard()
-            if path.startswith("/api/"):
+            if path == "/api/live/stream":
+                self._sse()                    # 长连接，不走 _json 一次性响应
+            elif path.startswith("/api/"):
                 status, payload = self._route_get(path)
                 self._json(payload, status)
             else:
@@ -127,9 +130,58 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": exc.message}, exc.status)
         except ValueError as exc:
             self._json({"error": str(exc)}, 400)
+        except (BrokenPipeError, ConnectionResetError):
+            pass                               # 浏览器关掉 SSE / 取消请求属于正常情况
         except Exception:                                  # noqa: BLE001 - 兜底不泄露栈
             logger.exception("处理 GET %s 失败", path)
             self._json({"error": "服务内部错误，请查看 data/runtime/logs/ 下的日志。"}, 500)
+
+    # ---- 实时推送（SSE） --------------------------------------------------
+    def _query(self) -> dict:
+        raw = parse_qs(urlparse(self.path).query)
+        return {key: values[0] for key, values in raw.items() if values}
+
+    def _sse(self) -> None:
+        """Server-Sent Events 长连接。
+
+        选 SSE 而不是 WebSocket：单向推送、浏览器自带断线重连、标准库就能实现，
+        本地单用户场景没有必要为双向通信引入额外依赖。
+        """
+        if getattr(self, "_head_only", False):
+            raise ApiError(405, "HEAD 不支持实时推送。")
+        query = self._query()
+        symbol = (query.get("symbol") or "").strip()
+        queue = feed.hub.open_stream()
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            for key, value in SECURITY_HEADERS.items():
+                self.send_header(key, value)
+            self.end_headers()
+            self._sse_event("hello", {"status": feed.hub.status(),
+                                      "bars": feed.hub.bars(symbol, "1m", 500)})
+            while True:
+                try:
+                    event = queue.get(timeout=15)
+                except queue_module.Empty:
+                    self.wfile.write(b": ping\n\n")   # 心跳，防代理超时断流
+                    self.wfile.flush()
+                    continue
+                self._sse_event(event.get("type", "message"), event)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            feed.hub.close_stream(queue)
+            logger.debug("SSE 连接结束：%s", symbol or "-")
+
+    def _sse_event(self, name: str, payload) -> None:
+        body = f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        self.wfile.write(body.encode("utf-8"))
+        self.wfile.flush()
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -173,6 +225,14 @@ class Handler(BaseHTTPRequestHandler):
                                       "simnow": simnow.simnow.available()}}
         if path == "/api/simnow/status":
             return 200, simnow.simnow.status()
+        if path == "/api/live/status":
+            return 200, feed.hub.status()
+        if path == "/api/live/bars":
+            query = self._query()
+            bars = feed.hub.bars(query.get("symbol", ""), query.get("period", "1m"),
+                                 int(query.get("limit", 500)))
+            return 200, {"symbol": query.get("symbol") or feed.hub.symbol,
+                         "period": query.get("period", "1m"), "bars": bars}
         if path == "/api/dashboard":
             return 200, views.dashboard()
         if path == "/api/diagnostics":
@@ -194,6 +254,18 @@ class Handler(BaseHTTPRequestHandler):
             trades = db.list_trading_run_trades()
             trades.sort(key=lambda trade: trade.get("exitTime", ""), reverse=True)
             return 200, trades
+        if path.startswith("/api/trading/runs/") and path.endswith("/bars"):
+            # 回放对齐用：把某次运行当时的行情原样取出来，供 K 线页把买卖点画准
+            run_id = path[len("/api/trading/runs/"):-len("/bars")].strip("/")
+            record = db.get_trading_run(run_id)
+            if not record:
+                raise ApiError(404, "交易运行记录不存在。")
+            bars = record.get("bars") or []
+            if not bars:
+                raise ApiError(404, "该运行没有保存行情快照。")
+            return 200, {"runId": run_id, "symbol": record.get("symbol"),
+                         "strategyName": record.get("strategyName"),
+                         "bars": bars, "count": len(bars)}
         if path.startswith("/api/trading/runs/"):
             record = db.get_trading_run(path.rsplit("/", 1)[-1])
             if not record:
@@ -212,6 +284,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai/chat":
             body = self._read_json()
             return 200, ai.chat(body.get("messages", []))
+        if path == "/api/live/start":
+            body = self._read_json()
+            driver = str(body.get("driver") or "sim").lower()
+            symbol = str(body.get("symbol") or "").strip()
+            if driver == "ctp":
+                return 200, feed.hub.start_ctp(symbol, str(body.get("exchange") or "CFFEX"))
+            if driver != "sim":
+                raise ApiError(400, "未知行情源，仅支持 sim 或 ctp。")
+            return 200, feed.hub.start_sim(symbol, body.get("basePrice"), body.get("speedup", 20))
+        if path == "/api/live/stop":
+            self._read_json()
+            return 200, feed.hub.stop()
         if path == "/api/simnow/connect":
             return 202, simnow.simnow.connect(self._read_json())
         if path == "/api/simnow/disconnect":

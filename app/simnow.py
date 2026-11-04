@@ -22,6 +22,8 @@ class SimNowManager:
         self.last_tick = None
         self.last_log = "尚未连接。"
         self._gateway_name = "CTP"
+        # 实时行情聚合器会注册到这里；回调异常不能影响网关自身的连接
+        self._tick_listeners: list = []
 
     @staticmethod
     def available():
@@ -125,6 +127,23 @@ class SimNowManager:
                 "lastPrice": getattr(tick, "last_price", None), "volume": getattr(tick, "volume", None),
                 "datetime": getattr(tick, "datetime", None).isoformat(sep=" ") if getattr(tick, "datetime", None) else "",
                 "bidPrice": getattr(tick, "bid_price_1", None), "askPrice": getattr(tick, "ask_price_1", None)}
+            listeners = list(self._tick_listeners)
+        # 分发给行情聚合器：单个订阅者出错不能拖垮 CTP 事件线程
+        for callback in listeners:
+            try:
+                callback(tick)
+            except Exception:
+                pass
+
+    def add_tick_listener(self, callback) -> None:
+        with self.lock:
+            if callback not in self._tick_listeners:
+                self._tick_listeners.append(callback)
+
+    def remove_tick_listener(self, callback) -> None:
+        with self.lock:
+            if callback in self._tick_listeners:
+                self._tick_listeners.remove(callback)
 
     def subscribe(self, symbol, exchange):
         symbol, exchange = str(symbol).strip(), str(exchange).strip()

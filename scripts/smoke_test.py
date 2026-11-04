@@ -315,8 +315,61 @@ def check_http_chain() -> None:
     check("删除后再取该运行返回 404", status == 404)
 
 
+def check_live_feed() -> None:
+    section("3. 实时行情：聚合口径 / 接口 / SSE 推流")
+    status, body = call("GET", "/api/live/status")
+    check("GET /api/live/status 可用", status == 200 and "driver" in body, f"status={status}")
+    check("初始状态未启动采集", body.get("running") is False)
+
+    status, body = call("POST", "/api/live/start", {"driver": "sim", "symbol": "IF9999", "speedup": 60})
+    check("POST /api/live/start 启动模拟源", status == 200 and body.get("running") is True,
+          f"status={status}")
+    check("模拟源明确标注数据非真实行情", "模拟" in (body.get("notice") or ""))
+
+    # 模拟源 60× 加速：等几秒应至少收口出一根新 bar
+    before = call("GET", "/api/live/bars?symbol=IF9999&period=1m&limit=500")[1].get("bars") or []
+    time.sleep(4)
+    after = call("GET", "/api/live/bars?symbol=IF9999&period=1m&limit=500")[1].get("bars") or []
+    check("模拟源持续产生新 bar", len(after) >= len(before) and len(after) > 100,
+          f"{len(before)} → {len(after)}")
+
+    if after:
+        stamps = [bar["timestamp"] for bar in after]
+        check("bar 时间戳严格递增且不重复", stamps == sorted(set(stamps)))
+        check("OHLC 满足 low<=min(o,c)<=max(o,c)<=high",
+              all(bar["low"] <= min(bar["open"], bar["close"])
+                  and bar["high"] >= max(bar["open"], bar["close"]) for bar in after))
+        check("成交量非负", all(bar["volume"] >= 0 for bar in after))
+
+    five = call("GET", "/api/live/bars?symbol=IF9999&period=5m&limit=500")[1].get("bars") or []
+    check("5 分钟聚合根数少于 1 分钟", 0 < len(five) < len(after), f"5m={len(five)} 1m={len(after)}")
+    if five and after:
+        check("5 分钟首根开盘价取自 1 分钟首根",
+              abs(five[0]["open"] - after[0]["open"]) < 1e-9)
+
+    # SSE：读前若干字节确认是事件流格式（长连接，读够就断开）
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        conn.request("GET", "/api/live/stream?symbol=IF9999")
+        response = conn.getresponse()
+        chunk = response.read(4096).decode("utf-8", "ignore")   # hello 事件里带 500 根 bar，先读够再断言
+        conn.close()
+        check("SSE 返回 text/event-stream",
+              response.getheader("Content-Type", "").startswith("text/event-stream"),
+              response.getheader("Content-Type", ""))
+        check("SSE 首个事件是 hello 且带行情快照", "event: hello" in chunk and '"bars"' in chunk)
+    except Exception as exc:                     # noqa: BLE001
+        check("SSE 事件流可读", False, f"{type(exc).__name__}: {exc}")
+
+    status, body = call("POST", "/api/live/stop", {})
+    check("POST /api/live/stop 停止采集", status == 200 and body.get("running") is False)
+
+    status, _ = call("POST", "/api/live/start", {"driver": "ctp", "symbol": "IF9999"})
+    check("未连接柜台时拒绝启动 CTP 行情", status == 400, f"status={status}")
+
+
 def check_security() -> None:
-    section("3. 安全回归：密钥泄露 / 目录穿越 / 跨站请求")
+    section("4. 安全回归：密钥泄露 / 目录穿越 / 跨站请求")
     for path in ("/.env", "/../.env", "/%2e%2e/.env", "/js/../.env",
                  "/.git/config", "/.venv/pyvenv.cfg", "/app/server.py",
                  "/requirements.txt", "/data/runtime/qice.sqlite3"):
@@ -366,6 +419,7 @@ def main() -> int:
         PORT = int(args.external.rsplit(":", 1)[-1].strip("/"))
         print(f"目标：{args.external}（复用现有服务，会写入该服务的数据目录）")
         check_http_chain()
+        check_live_feed()
         check_security()
     else:
         check_engine_invariants()
@@ -387,6 +441,7 @@ def main() -> int:
                 print(output[-3000:])
                 return 1
             check_http_chain()
+            check_live_feed()
             check_security()
         finally:
             proc.terminate()

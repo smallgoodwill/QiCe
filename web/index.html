@@ -30,12 +30,30 @@
 .require-row span{color:var(--muted);line-height:1.55}
 .require-row .st{margin-left:auto;flex:0 0 auto;font-size:10px;color:#ad771d;background:#fff6e6;border-radius:5px;padding:3px 7px}
 @media(max-width:680px){.mode-switch{width:100%;justify-content:center}.heading .toolbar{width:100%}}
+.live-layout{grid-template-columns:minmax(0,1fr) minmax(268px,.4fr);align-items:start}
+.kline-wrap{position:relative;height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.kline-canvas{position:absolute;inset:0}
+.marker-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.tr-badge{position:absolute;font-size:11px;font-weight:700;line-height:1;padding:5px 7px;border-radius:5px;white-space:nowrap;box-shadow:0 2px 6px #1b2d4b26}
+.tr-badge.buy{background:#fdecec;color:#bf3b42;border:1px solid #f0b5b8;transform:translate(-50%,0)}
+.tr-badge.sell{background:#e6f6f0;color:#0f6b52;border:1px solid #a9ddcd;transform:translate(-50%,-100%)}
+.tr-badge.is-hidden{display:none}
+.live-quote{display:flex;gap:13px;align-items:baseline;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.live-quote b{font-size:17px;color:var(--ink);letter-spacing:-.3px}
+.live-trades{max-height:430px;overflow:auto;margin-top:9px}
+.live-trade{display:grid;grid-template-columns:44px 1fr auto;gap:8px;padding:9px 4px;border-bottom:1px solid #f0f2f6;font-size:11px;cursor:pointer;border-radius:5px}
+.live-trade:hover{background:#f7f9fd}
+.live-trade .side{font-weight:650}
+.live-trade .side.buy{color:var(--red)}
+.live-trade .side.sell{color:var(--green)}
+.live-trade .t{color:var(--muted);font-size:10px}
+@media(max-width:1050px){.live-layout{grid-template-columns:1fr}.kline-wrap{height:420px}}
 </style>
 </head>
 <body>
 <div class="app">
 <aside class="sidebar"><div class="brand"><div class="logo">策</div><span>期策 · 模拟工作台</span></div><div class="nav-label">工作空间</div><nav class="nav">
-<button class="active" data-page="overview"><span class="ico">▦</span><span class="txt">总览仪表盘</span></button><button data-page="strategy"><span class="ico">⌘</span><span class="txt">我的策略库</span></button><button data-page="paper"><span class="ico">▶</span><span class="txt">交易</span></button><button data-page="backtest"><span class="ico">◷</span><span class="txt">策略回测</span></button><button data-page="diagnostics"><span class="ico">◈</span><span class="txt">品种诊断</span></button><button data-page="trades"><span class="ico">≋</span><span class="txt">交易清单</span></button><button data-page="daily"><span class="ico">▤</span><span class="txt">每日诊断</span></button><button data-page="assistant"><span class="ico">✳</span><span class="txt">智能问答</span></button>
+<button class="active" data-page="overview"><span class="ico">▦</span><span class="txt">总览仪表盘</span></button><button data-page="strategy"><span class="ico">⌘</span><span class="txt">我的策略库</span></button><button data-page="paper"><span class="ico">▶</span><span class="txt">交易</span></button><button data-page="live"><span class="ico">⌁</span><span class="txt">实时 K 线</span></button><button data-page="backtest"><span class="ico">◷</span><span class="txt">策略回测</span></button><button data-page="diagnostics"><span class="ico">◈</span><span class="txt">品种诊断</span></button><button data-page="trades"><span class="ico">≋</span><span class="txt">交易清单</span></button><button data-page="daily"><span class="ico">▤</span><span class="txt">每日诊断</span></button><button data-page="assistant"><span class="ico">✳</span><span class="txt">智能问答</span></button>
 </nav><div class="sidebar-foot"><div class="safe"><i class="dot"></i>仅本地模拟运行</div>教学演示 · 数据非实时</div></aside>
 <main class="main"><header class="topbar"><div class="crumb"><span style="color:#a0aabc">工作台</span>　/　<span id="crumb">总览仪表盘</span></div><div class="topright"><span class="badge">● PAPER TRADING</span><span class="hide-sm">数据来源：本地服务端</span><div class="avatar">研</div></div></header>
 <div class="content">
@@ -46,6 +64,7 @@
 <div><div class="card"><div class="card-head"><h2>信号预览</h2><span class="tag">5 分钟</span></div><div class="mini-chart"><svg viewBox="0 0 440 180" preserveAspectRatio="none" width="100%" height="100%"><line class="axis" x1="25" y1="30" x2="430" y2="30"/><line class="axis" x1="25" y1="75" x2="430" y2="75"/><line class="axis" x1="25" y1="120" x2="430" y2="120"/><path d="M25 122 L55 115 L85 128 L115 108 L145 112 L175 91 L205 95 L235 76 L265 89 L295 64 L325 68 L355 52 L385 61 L415 39" fill="none" stroke="#8ca0ca" stroke-width="2"/><path id="fastLine" d="M25 126 L55 117 L85 120 L115 103 L145 110 L175 88 L205 91 L235 71 L265 79 L295 59 L325 62 L355 45 L385 49 L415 35" fill="none" stroke="#5277ee" stroke-width="2.2"/><path d="M25 132 L55 128 L85 125 L115 120 L145 112 L175 105 L205 98 L235 92 L265 85 L295 78 L325 71 L355 63 L385 56 L415 49" fill="none" stroke="#e09b4b" stroke-width="2"/><text x="330" y="26" fill="#5277ee" font-size="9">快线</text><text x="366" y="26" fill="#e09b4b" font-size="9">慢线</text><circle cx="235" cy="71" r="5" fill="#16a17d"/><text x="242" y="69" fill="#168a6e" font-size="9">金叉</text></svg></div><div class="chart-note">合成行情片段 · 交叉点仅作视觉示意</div></div><div class="card" style="margin-top:15px"><div class="card-head"><h2>当前配置摘要</h2></div><div class="summary-row"><span>策略逻辑</span><b>快线上穿慢线做多</b></div><div class="summary-row"><span>均线组合</span><b id="maSummary">EMA(9) / EMA(21)</b></div><div class="summary-row"><span>过滤器</span><b id="filterSummary">RSI</b></div><div class="summary-row"><span>模拟状态</span><b id="sideSummary">运行中</b></div><div class="note">提醒：均线交叉属于滞后型信号。手续费、滑点、合约乘数及涨跌停规则在此 Demo 中未按真实合约精确建模。</div></div></div></div></section>
 
 <section class="page" id="page-paper"><div id="paperMount"></div></section>
+<section class="page" id="page-live"><div id="liveMount"></div></section>
 <section class="page" id="page-backtest"><div id="backtestMount"></div></section>
 <section class="page" id="page-diagnostics"><div id="diagnosticsMount"></div></section>
 
@@ -56,7 +75,7 @@
 <section class="page" id="page-assistant"><div id="assistantMount"></div></section>
 </div></main></div>
 <script>
-const pageNames={overview:'总览仪表盘',strategy:'我的策略库',paper:'交易',backtest:'策略回测',diagnostics:'品种诊断',trades:'交易清单',daily:'每日诊断',assistant:'智能问答'};
+const pageNames={overview:'总览仪表盘',strategy:'我的策略库',paper:'交易',live:'实时 K 线',backtest:'策略回测',diagnostics:'品种诊断',trades:'交易清单',daily:'每日诊断',assistant:'智能问答'};
 function go(page,syncHash){document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.getElementById('crumb').textContent=pageNames[page]||'工作台';if(syncHash!==false&&location.hash!=='#'+page)history.replaceState(null,'','#'+page);window.dispatchEvent(new CustomEvent('qice-page-change',{detail:page}));}
 window.go=go;document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
 // 深链接：刷新后停留在当前页（#paper 等），也便于直接把某一页发给别人
@@ -67,5 +86,5 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function loadTrades(){try{const r=await fetch('/api/trading/trades');const data=await r.json();if(!r.ok)throw Error(data.error||'无法读取交易账本');tradeData=data;document.getElementById('tradeCount').textContent=`${tradeData.length} 笔 · 服务端账本`;renderTrades();}catch(e){document.getElementById('tradeCount').textContent='服务未连接';document.getElementById('tradeRows').innerHTML=`<tr><td colspan="9" class="empty">${esc(e.message)}。请启动本地服务。</td></tr>`;}}
 function renderTrades(){const f=document.getElementById('tradeFilter').value;const rows=tradeData.filter(t=>f==='all'||(f==='long'&&['long','做多'].includes(t.side))||(f==='short'&&['short','做空'].includes(t.side)));document.getElementById('tradeRows').innerHTML=rows.length?rows.map(t=>`<tr><td class="muted">${esc(t.id)}</td><td class="symbol">${esc(t.symbol||'—')}</td><td>${esc(['long','做多'].includes(t.side)?'做多':'做空')}</td><td>${esc(t.entryTime||'—')} / ${money(t.entryPrice)}</td><td>${esc(t.exitTime||'—')} / ${money(t.exitPrice)}</td><td>${esc(t.qty)}</td><td>${money(t.fees)}</td><td class="${t.netPnl>=0?'positive':'negative'}">${money(t.netPnl)}</td><td>${esc(t.entryReason||'—')} / ${esc(t.exitReason||'持仓中')}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">暂无符合条件的模拟成交</td></tr>';}
 document.getElementById('tradeFilter').addEventListener('change',renderTrades);document.getElementById('exportBtn').addEventListener('click',()=>{const rows=[['ID','品种','方向','开仓时间','开仓价','平仓时间','平仓价','手数','费用','净盈亏','入场原因','退出原因'],...tradeData.map(t=>[t.id,t.symbol,t.side,t.entryTime,t.entryPrice,t.exitTime,t.exitPrice,t.qty,t.fees,t.netPnl,t.entryReason,t.exitReason])];const csv='\ufeff'+rows.map(r=>r.map(x=>'"'+String(x??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='paper-trades.csv';a.click();URL.revokeObjectURL(a.href)});loadTrades();
-</script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
+</script><script src="vendor/klinecharts.min.js"></script><script src="js/backtest.js"></script><script src="js/strategy-library.js"></script><script src="js/trading.js"></script><script src="js/live.js"></script><script src="js/dashboard.js"></script><script src="js/assistant.js"></script>
 </body></html>
