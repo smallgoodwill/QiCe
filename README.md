@@ -66,6 +66,7 @@ python .\scripts\replay.py data\samples\sample_5m_synthetic.csv --fast 9 --slow 
 ├─ web/                      前端（服务端只从这里读静态文件）
 │  ├─ index.html             单页壳 + 样式 + 通用脚本
 │  ├─ js/{backtest,strategy-library,trading,live,dashboard,assistant}.js
+│  ├─ js/kline-core.js         ★ K 线绘图内核（样式/指标/时间单调性），live 页与仪表盘组件共用
 │  └─ vendor/klinecharts.min.js   K 线图表库（9.8.12 UMD，本地化不走 CDN）
 ├─ data/
 │  ├─ samples/               内置合成样例行情
@@ -107,7 +108,7 @@ DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completion
 
 | 页面 | 行为 | 写入位置 |
 | --- | --- | --- |
-| 总览仪表盘 | 策略数、模拟权益、已实现盈亏、最近回测、权益曲线、最近成交 | 读 `trading_runs` / `backtests` |
+| 总览仪表盘 | 策略数、模拟权益、已实现盈亏、最近回测、**实时 K 线组件**、权益曲线、最近成交 | 读 `trading_runs` / `backtests` / `live_bars` |
 | 我的策略库 | 新建 / 详细 / 编辑 / 删除策略 | `strategies` |
 | 策略回测 | 导入 CSV → 服务端校验并回测 → 保存结果、曲线、逐笔、分段统计 | `backtests` |
 | 交易 | 从策略库选策略 + 导入 CSV → 启动模拟运行，逐 bar 自动推进 | `trading_runs` |
@@ -165,6 +166,7 @@ DeepSeek 走官方 OpenAI 兼容接口 `https://api.deepseek.com/chat/completion
 - **落库策略**：只把已收口的 bar 写进 `live_bars`（每分钟每合约最多一次写），正在形成的那根只留在内存，避免高频写盘。
 - **数据源隔离**：`live_bars.source` 记录每根 bar 来自 `ctp` 还是 `sim`，查询默认只取 `ctp`。模拟源按加速倍数生成 bar，时间戳会跑到当前时刻之后；不隔离的话模拟数据会和真实行情混在一张图上，把坐标轴顶歪、价格画成跳空（这是实际踩到的坑）。v3→v4 迁移里已存在的行无法辨别来源，统一标为 `legacy` 并排除在查询之外——宁可图上少几根，也不能把模拟数据当真实行情。
 - **历史不回溯**：CTP 只推实时 tick，接上之后从当前时刻开始攒 K 线，页面对此有明确提示。
+- **两处入口**：完整图表在「实时 K 线」页（含周期切换、成交标记、对齐回放）；仪表盘顶部另有一个紧凑版组件，只显示当前合约的 K 线与报价，两者共用 `web/js/kline-core.js` 这一份绘图内核，不会出现口径不一致。
 - **买卖点**：模拟盘的成交按 `entryTime` / `exitTime` 映射到 K 线坐标，买点挂在该根最低价下方、卖点挂在最高价上方，带自动避让与边界收敛。模拟盘跑的是导入的 CSV 行情，与实时源不是同一段数据；页面会给出提示，点一下即可「载入该次运行的行情并对齐」。
 - **注意**：非交易时段 CTP 不会有新 tick；`IF2503` 这类已交割合约也没有行情，请用当月在交易的合约（如 `IF2612`、`rb2601`）。
 
