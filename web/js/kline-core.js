@@ -7,14 +7,25 @@
 (() => {
   if (typeof window === 'undefined') return;
 
-  // 国内习惯：涨红跌绿
+  // 国内习惯：涨红跌绿。色值以 index.html 的 --up / --down 为单一来源，
+  // 读不到时（例如本文件被单独引用）退回同一组兜底值，保证不会画出反色。
+  const rootStyle = typeof getComputedStyle === 'function'
+    ? getComputedStyle(document.documentElement) : null;
+  const varColor = (name, fallback) => {
+    const value = rootStyle ? (rootStyle.getPropertyValue(name) || '').trim() : '';
+    return /^#[0-9a-f]{3,8}$/i.test(value) ? value : fallback;
+  };
+  const UP = varColor('--up', '#e06465');
+  const DOWN = varColor('--down', '#139875');
+  const FLAT = '#748198';
+
   const LIGHT_STYLES = {
     grid: {show: true, horizontal: {color: '#eef1f6'}, vertical: {color: '#f3f5f9'}},
     candle: {
-      bar: {upColor: '#e06465', downColor: '#139875', noChangeColor: '#748198',
-            upBorderColor: '#e06465', downBorderColor: '#139875',
-            upWickColor: '#e06465', downWickColor: '#139875'},
-      priceMark: {last: {upColor: '#e06465', downColor: '#139875', noChangeColor: '#748198'}}
+      bar: {upColor: UP, downColor: DOWN, noChangeColor: FLAT,
+            upBorderColor: UP, downBorderColor: DOWN,
+            upWickColor: UP, downWickColor: DOWN},
+      priceMark: {last: {upColor: UP, downColor: DOWN, noChangeColor: FLAT}}
     },
     xAxis: {axisLine: {color: '#e7ebf2'}, tickText: {color: '#8b96a8'}},
     yAxis: {axisLine: {color: '#e7ebf2'}, tickText: {color: '#8b96a8'}}

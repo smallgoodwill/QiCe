@@ -16,7 +16,7 @@ import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, api, config
+from . import __version__, api, config, runner
 
 # 启动后自动开浏览器的开关：设成 1/true/yes 可禁用（CI、无头环境用）
 _NO_OPEN_ENV = "QICE_NO_OPEN"
@@ -126,6 +126,15 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("期策 v%s 已启动：%s", __version__, url)
     logger.info("数据目录：%s", config.RUNTIME_DIR)
     logger.info("仅限本机教学演示，按 Ctrl+C 停止。")
+
+    # 把上次留在库里的策略运行态接回来（统一恢复成"已暂停"，
+    # 毕竟服务重启意味着中间断了一段行情，直接续跑会接出一个解释不了的成交价）
+    try:
+        restored = runner.restore()
+        if restored:
+            logger.info("策略常驻交易：恢复 %s 条运行态，均为暂停状态，确认后可在策略库点「恢复交易」。", restored)
+    except Exception:                              # noqa: BLE001 - 恢复失败不该挡住服务启动
+        logger.exception("恢复策略运行态失败，跳过。")
 
     if args.open and os.environ.get(_NO_OPEN_ENV, "").lower() not in ("1", "true", "yes"):
         # 延迟一点再开，等 serve_forever 真正进入 accept 循环

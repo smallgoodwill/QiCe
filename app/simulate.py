@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from . import config, db, engine, marketdata
+from . import config, db, engine, instruments, marketdata
 
 DEMO_NOTICE = ("演示行情由服务端按交易时段合成，同一日期永远生成同一段走势；"
                "它的作用是把「信号→成交→盈亏」链路走通，不代表任何真实品种。")
@@ -26,10 +26,36 @@ LIVE_NOTICE = ("真实行情取自本机采集库（CTP 逐笔聚合的 1 分钟
 
 MAX_DAYS = 20
 DEFAULT_CONFIG = {
-    "capital": 1_000_000, "multiplier": 300, "qty": 1,
-    "feePerSide": 23.0, "tickSize": 0.2, "slippageTicks": 1,
+    "capital": 1_000_000, "qty": 1,
+    "feePerSide": 23.0, "slippageTicks": 1,
     "atrMaxPct": 0.4, "atrPeriod": 14,
 }
+
+# 合成行情的起点价位，只影响演示行情"看起来像不像这个品种"，
+# 不参与任何真实计算；真实采集/回测的价格全部来自行情本身。
+# 乘数与最小变动不在这里，由 instruments 表统一提供。
+REF_PRICE = {
+    "if": 4000, "ih": 2800, "ic": 6500, "im": 6200,
+    "t": 108, "tf": 106, "ts": 102, "tl": 118,
+    "rb": 3300, "hc": 3400, "ss": 13500, "i": 800, "j": 1700, "jm": 1200,
+    "sf": 5800, "sm": 6200,
+    "cu": 78000, "al": 21000, "zn": 23000, "pb": 17500, "ni": 125000, "sn": 260000,
+    "ao": 4800, "bc": 78000,
+    "au": 560, "ag": 7800,
+    "sc": 520, "lu": 3600, "fu": 2900, "bu": 3500, "ru": 15000, "br": 13000, "sp": 5600,
+    "l": 7600, "v": 5200, "pp": 7200, "eg": 4600, "eb": 7000, "pg": 4300,
+    "ta": 4800, "ma": 2400, "fg": 1100, "sa": 1300, "ur": 1800, "pf": 6600,
+    "px": 6800, "sh": 2400,
+    "m": 2800, "y": 8200, "a": 4500, "b": 3800, "p": 8500, "c": 2300, "cs": 2600,
+    "jd": 3400, "lh": 14000,
+    "sr": 5800, "cf": 14000, "oi": 9500, "rm": 2400, "ap": 7500, "cj": 11000, "pk": 8200,
+    "ec": 1500,
+    "si": 9000, "lc": 75000, "ps": 45000,
+}
+DEFAULT_REF_PRICE = 3000.0
+
+# 演示行情用的默认品种：股指，价格量级和原来的样例一致，老结果看起来不会突变
+DEMO_SYMBOL = "IF2612"
 
 
 # --------------------------------------------------------------------------
@@ -52,8 +78,11 @@ def options() -> dict:
              "notice": LIVE_NOTICE},
         ],
         "contracts": contracts,
+        # 品种清单：前端下拉按板块分组渲染，选完品种再选具体合约
+        "instruments": instruments.all_instruments(),
         # 采集够了才默认"真实采集"，否则第一次打开就报错，体验很差
         "defaults": {**DEFAULT_CONFIG, "days": 3,
+                     "symbol": DEMO_SYMBOL,
                      "source": "live" if ready else "demo"},
     }
 
@@ -89,15 +118,20 @@ def _resolve_range(payload: dict) -> tuple[date, date, list[date]]:
     return days[0], days[-1], days
 
 
-def _load_demo(payload: dict, days: list[date], symbol: str) -> tuple[list[dict], dict]:
-    tick = float(payload.get("config", {}).get("tickSize") or DEFAULT_CONFIG["tickSize"])
-    base = float(payload.get("basePrice") or 4000.0)
+def _load_demo(payload: dict, days: list[date], symbol: str,
+               inst: instruments.Instrument | None = None) -> tuple[list[dict], dict]:
+    override = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    inst = inst or instruments.guess(symbol)
+    tick = float(override.get("tickSize") or (inst.tick if inst else 0.2))
+    base = float(payload.get("basePrice")
+                 or REF_PRICE.get(inst.code if inst else "", DEFAULT_REF_PRICE))
     # 截止到"现在"：当天未收盘就只生成已经发生的分钟，避免出现未来时间的 bar
     bars = marketdata.synthetic_bars(days, symbol=symbol, base_price=base, tick=tick,
                                      until=datetime.now(marketdata.CN_TZ))
     meta = {"kind": "demo", "label": "演示行情（合成）", "symbol": symbol,
             "notice": DEMO_NOTICE, "dayCount": len(days),
-            "days": [day.isoformat() for day in days]}
+            "days": [day.isoformat() for day in days],
+            "instrument": inst.to_dict() if inst else None}
     return bars, meta
 
 
@@ -159,6 +193,20 @@ def _enrich_trade(trade: dict, bars: list[dict], cfg: dict) -> dict:
     return {**trade, "holdMinutes": hold, "holdLabel": _hold_label(hold),
             "returnPct": round(trade["netPnl"] / notional * 100, 4) if notional else None,
             "mfePct": mfe, "maePct": mae}
+
+
+def enrich_trade_basic(trade: dict) -> dict:
+    """给任意来源的成交补持仓时长与收益率（不需要 bars，落库里的裸成交也能算）。
+
+    收益率口径与 `_enrich_trade` 一致：净盈亏 / 开仓名义金额。
+    成交自带 multiplier/qty（engine._close 写入），不依赖策略配置。
+    """
+    hold = _minutes_between(trade.get("entryTime"), trade.get("exitTime"))
+    notional = (trade.get("entryPrice") or 0) * (trade.get("multiplier") or 0) * (trade.get("qty") or 0)
+    out = {**trade, "holdMinutes": hold, "holdLabel": _hold_label(hold)}
+    if "returnPct" not in out or out.get("returnPct") is None:
+        out["returnPct"] = round(trade["netPnl"] / notional * 100, 4) if notional else None
+    return out
 
 
 def _daily_stats(trades: list[dict], curve: list[dict], days: list[str]) -> list[dict]:
@@ -238,6 +286,30 @@ def build_result(session: engine.TradingSession, meta: dict) -> dict:
     }
 
 
+def _resolve_symbol(payload: dict, strategy: dict, source: str) -> str:
+    """定下这次要跑哪个合约。
+
+    优先级：请求里显式指定 > 真实采集里已够数据的合约 > 策略记着的品种对应的主力合约。
+    策略库里存的是「沪深300股指 · IF2503」这种展示名（历史遗留），
+    只能拿来认品种，合约要重新按当前月份生成，否则会去跑一个已交割的合约。
+    """
+    explicit = str(payload.get("symbol") or "").strip()
+    if explicit:
+        return explicit
+
+    if source == "live":
+        stored = [row["symbol"] for row in db.live_bar_sources() if row["source"] == "ctp"]
+        if stored:
+            return stored[0]
+
+    inst = instruments.guess(str(strategy.get("symbol") or ""))
+    if inst:
+        rows = instruments.active_contracts(inst)
+        if rows:
+            return rows[0]["symbol"]
+    return DEMO_SYMBOL
+
+
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
@@ -251,24 +323,29 @@ def run(payload: dict, strategy: dict | None) -> dict:
         strategy = {"id": None, "name": "默认均线策略（EMA 9/21）", "fast": 9, "slow": 21,
                     "maType": "EMA", "atr": True, "atrPeriod": 14, "rsi": False}
 
+    days = _resolve_range(payload)[2]
+    symbol = _resolve_symbol(payload, strategy, source)
+    inst = instruments.guess(symbol)
+
+    # 乘数、最小变动是**合约属性**而不是策略属性：策略库里存的那份可能过时
+    # （早期默认 300，跑螺纹会把盈亏放大 60 倍），所以这里以品种表为准，
+    # 只有请求体里显式给的 config 才允许覆盖。
     raw_cfg = {**DEFAULT_CONFIG}
-    raw_cfg.update(strategy)
+    if inst:
+        raw_cfg["multiplier"] = inst.multiplier
+        raw_cfg["tickSize"] = inst.tick
+    raw_cfg.update({key: value for key, value in strategy.items()
+                    if key not in ("multiplier", "tickSize")})
     if isinstance(payload.get("config"), dict):
         raw_cfg.update(payload["config"])
     cfg = engine.normalize_config(raw_cfg)
 
-    days = _resolve_range(payload)[2]
-    if source == "live":
-        # 真实行情按合约名查库；策略里存的是"沪深300股指 · IF2503"这类展示名，不能直接用
-        stored = [row["symbol"] for row in db.live_bar_sources() if row["source"] == "ctp"]
-        symbol = str(payload.get("symbol") or (stored[0] if stored else "IF2612"))
-    else:
-        symbol = "IF-DEMO"
-
     if source == "demo":
-        bars, meta = _load_demo(payload, days, symbol)
+        bars, meta = _load_demo(payload, days, symbol, inst)
     else:
         bars, meta = _load_live(payload, days, symbol)
+        if inst:
+            meta["instrument"] = inst.to_dict()
 
     # 均线要先预热 slow 根，再留几根才有成交；低于这个数跑出来必然是 0 笔，不如直接说清楚
     need = max(config.MIN_BARS, cfg["slow"] + 5)

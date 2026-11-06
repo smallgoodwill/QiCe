@@ -1,6 +1,10 @@
-# 运行期唯一必需依赖：读取 .env（其余全部使用 Python 标准库）
+# 运行期依赖
+# python-dotenv：读取 .env
+# akshare：环境分析（行情/基差/库存/财经日历/新闻）与「主力连续分钟线」的公开数据源。
+#          pip 会连带装上 pandas / numpy / curl-cffi 等，那是它的硬依赖，本项目不直接使用。
 python-dotenv>=1.0
+akshare>=1.20
 
 # 可选：SimNow/CTP 实时行情网关见 requirements-ctp.txt
-# 旧版本里的 numpy / pandas / ta-lib / loguru / tzlocal 实际未被代码引用，
-# 已移除以免误以为平台依赖这些重包。
+# 旧版本里的 numpy / pandas / ta-lib / loguru / tzlocal 实际未被代码直接引用，
+# 已从直接依赖里移除；其中 numpy / pandas 现在由 akshare 间接引入。

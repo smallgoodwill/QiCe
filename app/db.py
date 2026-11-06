@@ -19,7 +19,7 @@ from typing import Any
 
 from . import config
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -81,6 +81,36 @@ def initialize() -> None:
                 source TEXT NOT NULL DEFAULT 'ctp',
                 PRIMARY KEY (symbol, ts)
             );
+            -- 每日 AI 诊断报告：content_md 存模型产出的正文，
+            -- meta_json 存生成时的事实快照（成交/权益/参数），便于日后核对"当时依据什么写的"
+            CREATE TABLE IF NOT EXISTS ai_reports (
+                id TEXT PRIMARY KEY,
+                report_date TEXT NOT NULL,
+                run_id TEXT,
+                symbol TEXT,
+                strategy_id TEXT,
+                strategy_name TEXT,
+                content_md TEXT NOT NULL,
+                meta_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_reports_date ON ai_reports(report_date DESC);
+            -- 同一天的同一段行情只留最新一份，避免反复点击把库塞满
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_reports_unique
+                ON ai_reports(report_date, IFNULL(run_id,''), IFNULL(symbol,''));
+            -- 策略级常驻纸上交易的运行态：一条策略最多一份。
+            -- state_json 存 engine.TradingSession 的完整快照（含 bars 与指标序列），
+            -- 服务重启后能据此把持仓和成交历史接回来，而不是从零开始。
+            CREATE TABLE IF NOT EXISTS strategy_runtime (
+                strategy_id TEXT PRIMARY KEY,
+                strategy_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                symbol TEXT NOT NULL DEFAULT '',
+                period TEXT NOT NULL DEFAULT '5m',
+                started_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}'
+            );
         """)
         row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         if row is None:
@@ -97,6 +127,8 @@ def _migrate(conn: sqlite3.Connection, from_version: int) -> None:
     v3 → v4：live_bars 增加 source 列。加列前已存在的行无法判断来自真实柜台
              还是内置模拟源（两者混在同一张表里，时间戳会互相穿插），因此统一
              标为 legacy 并排除在查询之外——宁可少画几根，不能把模拟数据当真实行情。
+    v5 → v6：新增 strategy_runtime（策略级常驻纸上交易的运行态）。
+             建表语句本身带 IF NOT EXISTS，这里不需要再补动作。
     """
     if from_version < 3:
         conn.execute("DROP TABLE IF EXISTS paper_state")
@@ -142,6 +174,43 @@ def delete_strategy(strategy_id: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# 策略运行态（常驻纸上交易）
+# --------------------------------------------------------------------------
+def save_strategy_runtime(record: dict) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO strategy_runtime
+                   (strategy_id, strategy_name, status, symbol, period,
+                    started_at, updated_at, state_json)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(strategy_id) DO UPDATE SET
+                   strategy_name=excluded.strategy_name, status=excluded.status,
+                   symbol=excluded.symbol, period=excluded.period,
+                   updated_at=excluded.updated_at, state_json=excluded.state_json""",
+            (record["strategyId"], record.get("strategyName") or "", record["status"],
+             record.get("symbol") or "", record.get("period") or "5m",
+             record.get("startedAt") or _now(), record.get("updatedAt") or _now(),
+             json.dumps(record.get("state") or {}, ensure_ascii=False)))
+
+
+def list_strategy_runtimes() -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM strategy_runtime ORDER BY updated_at DESC").fetchall()
+    return [{
+        "strategyId": row["strategy_id"], "strategyName": row["strategy_name"],
+        "status": row["status"], "symbol": row["symbol"], "period": row["period"],
+        "startedAt": row["started_at"], "updatedAt": row["updated_at"],
+        "state": json.loads(row["state_json"] or "{}"),
+    } for row in rows]
+
+
+def delete_strategy_runtime(strategy_id: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM strategy_runtime WHERE strategy_id=?", (strategy_id,))
+        return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------
 # 回测
 # --------------------------------------------------------------------------
 def save_backtest(result: dict) -> None:
@@ -165,7 +234,12 @@ def list_backtests(limit: int = 30) -> list[dict]:
                     "strategyName": result.get("strategyName"),
                     "createdAt": row["created_at"], "sourceBars": row["source_bars"],
                     "summary": json.loads(row["summary_json"]),
-                    "startTime": result.get("startTime"), "endTime": result.get("endTime")})
+                    "startTime": result.get("startTime"), "endTime": result.get("endTime"),
+                    # 按时间区间回测新增：列表里直接能看出这次跑的是哪个品种、什么周期
+                    "symbol": result.get("symbol"), "period": result.get("period"),
+                    "periodLabel": result.get("periodLabel"),
+                    "dataSource": result.get("dataSource"),
+                    "sourceKind": result.get("sourceKind")})
     return out
 
 
@@ -308,3 +382,74 @@ def live_bar_sources() -> list[dict]:
                FROM live_bars GROUP BY source, symbol ORDER BY symbol, source""").fetchall()
     return [{"source": row["source"], "symbol": row["symbol"], "count": row["n"],
              "startTime": row["start_ts"], "endTime": row["end_ts"]} for row in rows]
+
+
+# --------------------------------------------------------------------------
+# 每日 AI 诊断报告
+# --------------------------------------------------------------------------
+def save_ai_report(report: dict) -> dict:
+    """按 (日期, 运行, 品种) 唯一：同一天重跑同一段行情就覆盖，不重复堆记录。"""
+    report_id = str(report.get("id") or uuid.uuid4())
+    created = report.get("createdAt") or _now()
+    payload = {**report, "id": report_id, "createdAt": created}
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO ai_reports
+               (id,report_date,run_id,symbol,strategy_id,strategy_name,content_md,meta_json,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(report_date, IFNULL(run_id,''), IFNULL(symbol,'')) DO UPDATE SET
+                 content_md=excluded.content_md, meta_json=excluded.meta_json,
+                 strategy_name=excluded.strategy_name, created_at=excluded.created_at""",
+            (report_id, str(report.get("date")), report.get("runId"), report.get("symbol"),
+             report.get("strategyId"), report.get("strategyName"),
+             str(report.get("content") or ""),
+             json.dumps(report.get("meta") or {}, ensure_ascii=False), created))
+        row = conn.execute(
+            """SELECT id FROM ai_reports
+               WHERE report_date=? AND IFNULL(run_id,'')=? AND IFNULL(symbol,'')=?""",
+            (str(report.get("date")), report.get("runId") or "", report.get("symbol") or "")).fetchone()
+    payload["id"] = row["id"] if row else report_id
+    return payload
+
+
+def list_ai_reports(limit: int = 30) -> list[dict]:
+    """列表只回摘要，正文按需再取，避免列表接口把几十篇报告全塞进响应。"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT id,report_date,symbol,strategy_name,run_id,meta_json,created_at,
+                      LENGTH(content_md) AS chars
+               FROM ai_reports ORDER BY report_date DESC, created_at DESC LIMIT ?""",
+            (limit,)).fetchall()
+    out = []
+    for row in rows:
+        meta = {}
+        try:
+            meta = json.loads(row["meta_json"] or "{}")
+        except json.JSONDecodeError:
+            pass
+        out.append({"id": row["id"], "date": row["report_date"], "symbol": row["symbol"],
+                    "strategyName": row["strategy_name"], "runId": row["run_id"],
+                    "createdAt": row["created_at"], "chars": row["chars"],
+                    "summary": meta.get("headline") or meta.get("stats", {}).get("summaryLine")})
+    return out
+
+
+def get_ai_report(report_id: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM ai_reports WHERE id=?", (report_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        meta = json.loads(row["meta_json"] or "{}")
+    except json.JSONDecodeError:
+        meta = {}
+    return {"id": row["id"], "date": row["report_date"], "runId": row["run_id"],
+            "symbol": row["symbol"], "strategyId": row["strategy_id"],
+            "strategyName": row["strategy_name"], "content": row["content_md"],
+            "meta": meta, "createdAt": row["created_at"]}
+
+
+def delete_ai_report(report_id: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM ai_reports WHERE id=?", (report_id,))
+        return cur.rowcount > 0

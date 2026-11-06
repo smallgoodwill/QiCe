@@ -37,7 +37,7 @@
       <div class="card">
         <div class="card-head"><h2>模拟设置</h2><span class="sub">一次算完，不用等</span></div>
         <div class="field"><label>策略</label><select id="simStrategy" class="select"><option value="">内置均线策略（EMA 9 / 21）</option></select><small id="simStrategyNote">不选策略时用内置 EMA 9/21 跑。</small></div>
-        <div class="field" style="margin-top:13px"><label>行情来源</label><div class="seg" id="simSource"></div><small id="simSourceNote">演示行情用于验证策略与界面，不代表真实走势。</small><div id="simSymbolWrap" style="display:none;margin-top:10px"><label style="display:block;font-size:11px;color:#6f7b8e;margin-bottom:5px">采集合约</label><select id="simSymbol" class="select"></select></div></div>
+        <div class="field" style="margin-top:13px"><label>行情来源</label><div class="seg" id="simSource"></div><small id="simSourceNote">演示行情用于验证策略与界面，不代表真实走势。</small><div id="simSymbolWrap" style="margin-top:10px"><label style="display:block;font-size:11px;color:#6f7b8e;margin-bottom:5px">交易品种</label><div style="display:flex;gap:6px"><select id="simSector" class="select" style="flex:0 0 74px" title="板块"></select><select id="simCode" class="select" style="flex:1" title="品种"></select><select id="simContract" class="select" style="flex:1" title="合约"></select></div><small id="simInstrumentNote">乘数、最小变动价位按品种自动套用。</small></div></div>
         <div class="field" style="margin-top:13px"><label>时间段</label><div class="quick" id="simQuick"><button data-days="1">最近 1 个交易日</button><button data-days="3">最近 3 个</button><button data-days="5">最近 5 个</button><button data-days="10">最近 10 个</button></div><div class="sim-dates"><input type="date" id="simStart"><span class="sub">至</span><input type="date" id="simEnd"></div><div class="sim-range" id="simRangeNote">选择交易日区间</div></div>
         <details class="sim-adv"><summary>合约与成本参数</summary><div class="form-grid"><div class="field"><label>初始资金</label><input id="simCapital" type="number" min="1" step="10000" value="1000000"></div><div class="field"><label>合约乘数</label><input id="simMult" type="number" min="0.01" step="0.1" value="300"></div><div class="field"><label>每笔手数</label><input id="simQty" type="number" min="1" step="1" value="1"></div><div class="field"><label>每边手续费 / 手</label><input id="simFee" type="number" min="0" step="0.1" value="23"></div><div class="field"><label>最小变动价位</label><input id="simTick" type="number" min="0.0001" step="0.1" value="0.2"></div><div class="field"><label>单边滑点（跳）</label><input id="simSlip" type="number" min="0" step="1" value="1"></div><div class="field"><label>ATR 波动上限（%）</label><input id="simAtrMax" type="number" min="0" step="0.05" value="0.4"><small>超过则不新开仓</small></div><label class="checkline"><input id="simBlackout" type="checkbox" checked> 跳过事件禁入 bar</label></div></details>
         <div class="toolbar" style="margin-top:15px"><button class="btn primary" id="simRun">▶　开始模拟</button><span class="sub" id="simHint"></span></div>
@@ -54,9 +54,9 @@
           <div class="card"><div class="kpi-top">交易笔数</div><div class="value" id="simCount">—</div><div class="metric-tip" id="simCountTip">手续费合计 —</div></div>
         </div>
         <div class="card" style="margin-top:16px">
-          <div class="card-head"><div><h2>K 线 + 买卖点</h2><div class="sub" id="simResultTitle">还没有结果 · 左侧设置好点「开始模拟」</div></div><div class="toolbar"><div class="seg" id="simZoom"><button type="button" data-zoom="all" class="active">全部</button><button type="button" data-zoom="day">近 1 日</button><button type="button" data-zoom="hour">近 1 小时</button></div><span class="tag" id="simSourceTag" style="display:none">—</span></div></div>
+          <div class="card-head"><div><h2>K 线 + 买卖点</h2><div class="sub" id="simResultTitle">还没有结果 · 左侧设置好点「开始模拟」</div></div><div class="toolbar"><div class="seg" id="simZoom"><button type="button" data-zoom="all" class="active">全部</button><button type="button" data-zoom="day">近 1 日</button><button type="button" data-zoom="hour">近 1 小时</button></div><button class="btn" id="simMarkerToggle" title="切换是否在 K 线上标注买卖点">交易点：隐藏</button><span class="tag" id="simSourceTag" style="display:none">—</span></div></div>
           <div class="kline-wrap compact"><div id="simKline" class="kline-canvas"></div><div class="marker-layer" id="simMarkerLayer"></div><div class="kline-empty" id="simKlineEmpty"><b>买卖点会画在这里</b><span>红色为买入开仓，绿色为卖出平仓，鼠标悬停看成交价与时间</span></div></div>
-          <div class="chart-note" id="simKlineNote">红点 = 买入开仓 · 绿点 = 卖出平仓；K 线为 1 分钟 bar，已按北京时间对齐。</div>
+          <div class="chart-note" id="simKlineNote">交易点默认隐藏，保持走势干净；点下方「逐笔明细」任意一行即可在图上定位该笔。</div>
         </div>
       </div>
     </div>
@@ -79,7 +79,9 @@
   </div>`;
 
   let options = null, strategies = [], currentSource = 'demo', lastResult = null;
-  let klineView = null, markers = [], markerFrame = null;
+  let klineView = null, allMarkers = [], markers = [], markerFrame = null;
+  // 交易点默认隐藏：图表先保持干净看走势；点「交易详情」里某笔，才把那一笔标出来
+  let markerMode = 'off', focusTradeIndex = null;
   let currentZoom = 'all', currentBarSpace = 6;
 
   // K 线缩放：全部 / 近 1 日 / 近 1 小时。1 分钟 bar 下 1 个交易日 = 240 根、1 小时 = 60 根。
@@ -200,19 +202,78 @@
     updateSymbolPicker();
   }
 
-  // 真实采集才需要选合约；演示行情固定用 IF-DEMO
-  function updateSymbolPicker() {
-    const wrap = $('simSymbolWrap');
-    if (!wrap) return;
-    wrap.style.display = currentSource === 'live' ? '' : 'none';
-    if (currentSource !== 'live') return;
-    const all = options?.contracts || [];
+  // ---- 交易品种：板块 → 品种 → 合约 --------------------------------------
+  // 以前只有"真实采集"才能选合约，演示行情写死 IF-DEMO，导致换个品种根本没法试。
+  // 现在任何来源都能选：演示行情按选中品种的乘数/最小变动/参考价位合成走势。
+  let instrumentGroups = [], picks = {sector: '', code: '', contract: ''};
+
+  function currentSymbol() { return $('simContract')?.value || null; }
+
+  function fillSectors() {
+    instrumentGroups = options?.instruments || [];
+    if (!instrumentGroups.length) return;
+    const select = $('simSector');
+    select.innerHTML = instrumentGroups.map(group =>
+      `<option value="${esc(group.sector)}">${esc(group.sector)}</option>`).join('');
+    const wanted = picks.sector || '黑色';    // 默认停在黑色系：螺纹是最常被拿来试的品种
+    select.value = instrumentGroups.some(g => g.sector === wanted) ? wanted
+      : instrumentGroups[0].sector;
+    fillCodes();
+  }
+
+  function fillCodes() {
+    const group = instrumentGroups.find(g => g.sector === $('simSector').value) || instrumentGroups[0];
+    const items = group?.items || [];
+    const select = $('simCode');
+    select.innerHTML = items.map(item =>
+      `<option value="${esc(item.code)}">${esc(item.name)} · ${esc(item.code.toUpperCase())}</option>`).join('');
+    if (items.some(item => item.code === picks.code)) select.value = picks.code;
+    fillContracts();
+  }
+
+  async function fillContracts() {
+    const select = $('simContract');
+    if (!select) return;
     const minimum = options?.minBars || 30;
-    const select = $('simSymbol'), previous = select.value;
-    select.innerHTML = all.length
-      ? all.map(row => `<option value="${esc(row.symbol)}">${esc(row.symbol)} · ${row.count} 根${row.count < minimum ? '（不足）' : ''}</option>`).join('')
-      : '<option value="">还没有采集到行情</option>';
-    if (all.some(row => row.symbol === previous)) select.value = previous;
+
+    if (currentSource === 'live') {
+      // 真实采集只能选已经落库的合约，别的选了也没有数据
+      const collected = (options?.contracts || []).filter(row => row.source === 'ctp');
+      select.innerHTML = collected.length
+        ? collected.map(row => {
+            const low = row.count < minimum ? '（不足）' : '';
+            return `<option value="${esc(row.symbol)}">${esc(row.symbol)} · ${row.count} 根${low}</option>`;
+          }).join('')
+        : '<option value="">尚未采集</option>';
+      $('simInstrumentNote').textContent = collected.length
+        ? '真实采集只能选已经攒够数据的合约；根数不足时跑不出成交。'
+        : '还没有采集到真实行情。先到「实时 K 线」页保持采集，或把来源切回演示行情。';
+      return;
+    }
+
+    const code = $('simCode').value;
+    if (!code) { select.innerHTML = '<option value="">—</option>'; return; }
+    try {
+      const data = await (await fetch(`/api/instruments/${encodeURIComponent(code)}/contracts`)).json();
+      const rows = data.contracts || [];
+      select.innerHTML = rows.length
+        ? rows.map(row => `<option value="${esc(row.symbol)}">${esc(row.symbol)}${row.isMain ? ' · 近月' : ''}</option>`).join('')
+        : '<option value="">无可用合约</option>';
+      const inst = data.instrument || {};
+      $('simInstrumentNote').textContent =
+        `乘数 ${inst.multiplier} · 最小变动 ${inst.tick} · 保证金参考 ${inst.marginPct}%；演示行情按该品种的价位量级合成。`;
+      // 乘数与最小变动跟着品种走，手填容易和品种对不上，这里直接同步并置灰
+      if (inst.multiplier && $('simMult')) { $('simMult').value = inst.multiplier; $('simMult').readOnly = true; }
+      if (inst.tick && $('simTick')) { $('simTick').value = inst.tick; $('simTick').readOnly = true; }
+    } catch (error) {
+      select.innerHTML = '<option value="">—</option>';
+      $('simInstrumentNote').textContent = '品种接口不可用：' + error.message;
+    }
+  }
+
+  function updateSymbolPicker() {
+    if (!instrumentGroups.length) fillSectors();
+    else fillContracts();
   }
 
   function updateSourceNote() {
@@ -283,7 +344,7 @@
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           strategyId: strategyId || null, source: currentSource, start, end, config,
-          symbol: currentSource === 'live' ? ($('simSymbol')?.value || null) : null
+          symbol: currentSymbol()
         })
       });
       render(result);
@@ -318,19 +379,79 @@
   }
 
   function buildMarkers(trades) {
-    markers = [];
-    trades.forEach(trade => {
+    allMarkers = [];
+    (trades || []).forEach((trade, index) => {
       const entryTs = Date.parse(trade.entryTime);
       if (Number.isFinite(entryTs) && +trade.entryPrice > 0) {
-        markers.push({ts: entryTs, value: +trade.entryPrice, kind: 'buy', label: `买 ${price(trade.entryPrice)}`,
-          tip: `买入开仓 @ ${price(trade.entryPrice)}　${stamp(trade.entryTime)}　第 ${trade.id} 笔`});
+        allMarkers.push({ts: entryTs, value: +trade.entryPrice, kind: 'buy', tradeIndex: index,
+          label: `买 ${price(trade.entryPrice)}`,
+          tip: `第 ${index + 1} 笔 · 买入开仓 @ ${price(trade.entryPrice)}　${stamp(trade.entryTime)}`});
       }
       const exitTs = Date.parse(trade.exitTime);
       if (Number.isFinite(exitTs) && +trade.exitPrice > 0) {
-        markers.push({ts: exitTs, value: +trade.exitPrice, kind: 'sell', label: `卖 ${price(trade.exitPrice)}`,
-          tip: `卖出平仓 @ ${price(trade.exitPrice)}　${stamp(trade.exitTime)}　净盈亏 ${plain(trade.netPnl)}`});
+        allMarkers.push({ts: exitTs, value: +trade.exitPrice, kind: 'sell', tradeIndex: index,
+          label: `卖 ${price(trade.exitPrice)}`,
+          tip: `第 ${index + 1} 笔 · 卖出平仓 @ ${price(trade.exitPrice)}　${stamp(trade.exitTime)}　净盈亏 ${plain(trade.netPnl)}`});
       }
     });
+    applyMarkerMode();
+  }
+
+  // 三种状态：off=全部隐藏，all=全部显示，single=只显示选中的那一笔
+  function applyMarkerMode() {
+    if (markerMode === 'single' && focusTradeIndex != null) {
+      markers = allMarkers.filter(marker => marker.tradeIndex === focusTradeIndex);
+    } else if (markerMode === 'all') {
+      markers = allMarkers.slice();
+    } else {
+      markers = [];
+    }
+    const button = $('simMarkerToggle');
+    if (button) {
+      button.textContent = markerMode === 'off' ? '交易点：隐藏'
+        : markerMode === 'single' ? `交易点：第 ${focusTradeIndex + 1} 笔` : '交易点：全部';
+      button.classList.toggle('primary', markerMode !== 'off');
+    }
+    const note = $('simKlineNote');
+    if (note) {
+      note.textContent = markerMode === 'off'
+        ? '交易点已隐藏。点下方「逐笔明细」任意一行，即可在 K 线上定位那笔的开平仓。'
+        : '红点 = 买入开仓 · 绿点 = 卖出平仓；K 线为 1 分钟 bar，已按北京时间对齐。';
+    }
+    scheduleMarkers();
+  }
+
+  function toggleMarkers() {
+    const turningOn = markerMode === 'off';
+    markerMode = turningOn ? 'all' : 'off';
+    focusTradeIndex = null;
+    document.querySelectorAll('#simTrades tr').forEach(row => row.classList.remove('selected'));
+    applyMarkerMode();
+    // 点开"全部"时把视野也拉回整段：否则刚才按单笔放大的视野里只看得到一两个点
+    if (turningOn) applyBarZoom('all');
+  }
+
+  // 点某一笔：只标这一笔，并把图表滚到它的开仓位置
+  function focusTrade(index) {
+    const trade = lastResult?.trades?.[index];
+    if (!trade) return;
+    focusTradeIndex = index;
+    markerMode = 'single';
+    applyMarkerMode();
+    document.querySelectorAll('#simTrades tr').forEach(row => {
+      row.classList.toggle('selected', Number(row.dataset.index) === index);
+    });
+    if (klineView && Number.isFinite(+trade.entryIdx)) {
+      try {
+        const total = klineView.dataList().length;
+        const usable = (($('simKline').clientWidth || 800) - 90);
+        const space = Math.min(10, Math.max(2, usable / 120));   // 约 2 小时的视野
+        currentBarSpace = space;
+        klineView.chart.setBarSpace(space);
+        klineView.chart.scrollToDataIndex(Math.max(0, Math.min(total - 1, +trade.entryIdx + 20)));
+      } catch (_) { /* 低版本没有该接口，保持当前视野 */ }
+      scheduleMarkers();
+    }
   }
 
   function renderMarkers() {
@@ -404,7 +525,7 @@
 
   function renderRow(trade, index) {
     const positive = trade.netPnl >= 0;
-    return `<tr title="${esc(`${trade.id} · ${trade.entryReason || ''} → ${trade.exitReason || ''}`)}">`
+    return `<tr data-index="${index}" title="点击在 K 线上定位这一笔：${esc(`${trade.id} · ${trade.entryReason || ''} → ${trade.exitReason || ''}`)}">`
       + `<td class="muted">${index + 1}</td><td>${esc(trade.side)}</td>`
       + `<td>${esc(stamp(trade.entryTime))}<br><span class="muted">${price(trade.entryPrice)}</span></td>`
       + `<td>${esc(stamp(trade.exitTime))}<br><span class="muted">${price(trade.exitPrice)}</span></td>`
@@ -446,6 +567,8 @@
     if (view) {
       const clean = view.apply(result.bars || []);
       $('simKlineEmpty').style.display = clean.length ? 'none' : 'flex';
+      markerMode = 'off';
+      focusTradeIndex = null;
       buildMarkers(result.trades || []);
       // 图表首帧布局没完成时 setBarSpace 会被随后的内部重排覆盖，
       // 这里在几个时间点各设一次（幂等），确保不同机器速度下都能落到目标缩放
@@ -464,6 +587,9 @@
     $('simTrades').innerHTML = result.trades.length
       ? result.trades.map(renderRow).join('')
       : '<tr><td colspan="12" class="empty">这段时间没有触发任何成交：可以放长区间，或在策略库把均线周期调小</td></tr>';
+    $('simTrades').querySelectorAll('tr[data-index]').forEach(row => {
+      row.addEventListener('click', () => focusTrade(Number(row.dataset.index)));
+    });
 
     $('simDaily').innerHTML = (result.daily || []).length
       ? result.daily.map(day => `<tr><td>${esc(day.date)}</td><td>${day.tradeCount}</td><td>${day.wins} / ${day.losses}</td><td class="muted">${plain(day.fees)}</td><td class="${day.netPnl >= 0 ? 'positive' : 'negative'}">${cash(day.netPnl)}</td><td class="${day.cumPnl >= 0 ? 'positive' : 'negative'}">${plain(day.cumPnl)}</td><td>${plain(day.dayEndEquity)}</td></tr>`).join('')
@@ -552,6 +678,11 @@
     try {
       fillStrategies(window.strategyLibrary?.all() || await api('/api/strategies'));
     } catch (_) { fillStrategies(window.strategyLibrary?.all() || []); }
-    loadHistory();
+    $('simMarkerToggle').addEventListener('click', toggleMarkers);
+  $('simSector').addEventListener('change', () => { picks.sector = $('simSector').value; fillCodes(); });
+  $('simCode').addEventListener('change', () => { picks.code = $('simCode').value; fillContracts(); });
+  $('simContract').addEventListener('change', () => { picks.contract = $('simContract').value; });
+
+  loadHistory();
   })();
 })();

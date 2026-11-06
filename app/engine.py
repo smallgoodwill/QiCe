@@ -135,6 +135,17 @@ def public_config(cfg: dict) -> dict:
 # --------------------------------------------------------------------------
 # 撮合记账
 # --------------------------------------------------------------------------
+# state() 序列化用驼峰（前端和 JSON 直接用），实例属性是蛇形。
+# 恢复时必须显式映射，不能拿驼峰名直接 setattr —— 那只是给对象挂了个没人读的
+# 新属性，真正的字段还停在初始值。
+_ATTR = {
+    "equityCurve": "equity_curve", "dailyPnl": "daily_pnl",
+    "realizedPnl": "realized_pnl", "unrealizedPnl": "unrealized_pnl",
+    "peakEquity": "peak_equity", "maxDrawdownPct": "max_drawdown_pct",
+    "currentTime": "current_time", "lastMessage": "last_message",
+}
+
+
 class TradingSession:
     """单策略、单向做多、逐 bar 推进的模拟会话。
 
@@ -144,7 +155,8 @@ class TradingSession:
 
     def __init__(self, bars: list[dict], cfg: dict, *, strategy: dict | None = None,
                  run_id: str | None = None, created_at: str | None = None,
-                 trade_prefix: str = "PAPER", curve_limit: int | None = 1000):
+                 trade_prefix: str = "PAPER", curve_limit: int | None = 1000,
+                 continuous: bool = False):
         strategy = strategy or {}
         self.bars = bars
         self.cfg = cfg
@@ -152,6 +164,9 @@ class TradingSession:
         self.created_at = created_at or _now_iso()
         self.trade_prefix = trade_prefix
         self.curve_limit = curve_limit
+        # 连续交易模式（策略常驻跑纸面交易）：行情靠 feed() 不断追加，
+        # "最后一根"永远只是最新一根，不存在"回放结束"，所以不能强制收尾。
+        self.continuous = continuous
         self.strategy_id = strategy.get("id")
         self.strategy_name = strategy.get("name") or "未命名策略"
         self.symbol = strategy.get("symbol") or "DEMO"
@@ -214,11 +229,14 @@ class TradingSession:
         for key in ("fastLine", "slowLine", "atr", "rsi"):
             if record.get(key):
                 session.series[key] = record[key]
+        # state() 用的是驼峰键（要过 JSON），而实例属性是蛇形。
+        # 直接 setattr(session, "realizedPnl", ...) 只会挂上一个没人读的同名属性，
+        # 真正的 realized_pnl 还停在初始值 —— 这就是恢复后浮盈和权益曲线全丢的原因。
         for key in ("status", "cursor", "cash", "position", "trades", "signals", "equityCurve",
                     "dailyPnl", "realizedPnl", "unrealizedPnl", "equity", "peakEquity",
                     "maxDrawdownPct", "currentTime", "lastMessage"):
             if key in state:
-                setattr(session, key, state[key])
+                setattr(session, _ATTR.get(key, key), state[key])
         session.meta = state.get("sourceMeta") or {}
         return session
 
@@ -229,7 +247,9 @@ class TradingSession:
             return self
         total = len(self.bars)
         if self.cursor >= total:
-            self._finish()
+            # 连续模式：只是还没等到下一根 bar，不算"跑完了"
+            if not self.continuous:
+                self._finish()
             return self
 
         i = self.cursor
@@ -242,20 +262,25 @@ class TradingSession:
             self._close(i, "均线死叉，下一根 bar 开盘退出", bar["open"])
 
         if not self.position and cross_up:
-            if i >= total - 1:
+            # 回放模式下末端不开仓：开了也会被下一行的"回放结束"立刻平掉，白记一笔。
+            # 连续模式下最后一根就是最新行情，没有结束这回事，照常开。
+            if not self.continuous and i >= total - 1:
                 blockers = [*blockers, "样本末端不新开仓"]
             if blockers:
-                self._log_signal(bar["timestamp"], "skipped", "；".join(blockers))
+                self._log_signal(bar["timestamp"], "skipped", "；".join(blockers), bar["close"])
             else:
                 self._open(i)
 
-        if i == total - 1 and self.position:
+        if not self.continuous and i == total - 1 and self.position:
             self._close(i, "回放结束，按最后收盘退出", bar["close"])
 
         self._mark(bar, i)
         self.cursor += 1
         if self.cursor >= total:
-            self._finish()
+            if self.continuous:
+                self.last_message = "已跟到最新一根 bar，等待下一根。"
+            else:
+                self._finish()
         else:
             self.last_message = f"已处理 {self.cursor} / {total} 根 bar。"
         return self
@@ -267,6 +292,128 @@ class TradingSession:
         index = max(0, min(len(self.bars) - 1, index))
         self._close(index, reason, self.bars[index]["open"] if raw_price is None else raw_price)
         self._mark(self.bars[index], index)
+
+    # -- 增量行情（连续交易） ------------------------------------------------
+    def _recalc_series(self) -> None:
+        """按当前 bars 重算指标序列。
+
+        指标是整段序列的函数（EMA 有递推、ATR 有平滑），追加一根就局部补算是
+        自找麻烦；这里直接全量重算。320 根 × 4 个指标是毫秒级，不值得优化。
+        """
+        closes = [bar["close"] for bar in self.bars]
+        self.series = {
+            "fastLine": indicators.moving(closes, self.cfg["fast"], self.cfg["maType"]),
+            "slowLine": indicators.moving(closes, self.cfg["slow"], self.cfg["maType"]),
+            "atr": indicators.atr(self.bars, self.cfg["atrPeriod"]),
+            "rsi": indicators.rsi(closes, self.cfg["rsiPeriod"]),
+        }
+
+    def feed(self, bars: list[dict]) -> int:
+        """追加/刷新行情，返回真正新增的 bar 根数（连续交易用）。
+
+        分开处理两种变化：
+
+        1. **新增**：时间戳比现有最后一根更新的，追加到末尾；
+        2. **刷新**：分钟线接口的最后一根是"正在形成"的 bar，收盘价每分钟都在变。
+           只要它还没被 cursor 处理过（index >= cursor），就直接换成最新版本。
+
+        已经被 cursor 处理过的历史 bar 一律不动 —— 那笔账已经记下了，
+        事后拿新数据覆盖会让成交价和当时的行情对不上。
+        """
+        if not bars:
+            return 0
+        incoming = {bar["timestamp"]: bar for bar in bars}
+        if not self.bars:
+            self.bars.extend(sorted(incoming.values(), key=lambda bar: bar["timestamp"]))
+            self._recalc_series()
+            return len(self.bars)
+
+        refreshed = 0
+        for offset in range(1, min(4, len(self.bars)) + 1):
+            index = len(self.bars) - offset
+            if index < self.cursor:
+                break
+            ts = self.bars[index]["timestamp"]
+            if ts in incoming:
+                self.bars[index] = incoming[ts]
+                refreshed += 1
+
+        last_ts = self.bars[-1]["timestamp"]
+        fresh = sorted((bar for ts, bar in incoming.items() if ts > last_ts),
+                       key=lambda bar: bar["timestamp"])
+        if fresh:
+            self.bars.extend(fresh)
+        if fresh or refreshed:
+            self._recalc_series()
+        return len(fresh)
+
+    def skip_to(self, index: int) -> int:
+        """把 cursor 直接推到 index，跳过中间的 bar 且**不产生任何成交**。
+
+        这是"暂停交易期间不补跑"的实现：暂停时行情照收，但恢复后不该把
+        暂停那段时间的金叉死叉全部补做一遍 —— 那等于没暂停。
+
+        返回跳过的根数。返回前会把持仓按最新价重新标记，
+        否则恢复后权益曲线会从暂停前的价位突然跳一下。
+        """
+        index = max(self.cursor, min(int(index), len(self.bars) - 1))
+        skipped = index - self.cursor
+        if skipped <= 0:
+            return 0
+        self.cursor = index
+        self._mark(self.bars[index], index)
+        self._log_signal(self.bars[index]["timestamp"], "gap",
+                         f"暂停期间跳过 {skipped} 根 bar，未产生成交", self.bars[index]["close"])
+        return skipped
+
+    def mark_latest(self) -> None:
+        """按最后一根 bar 的收盘价刷新浮盈与权益，不推进 cursor、不记曲线点。
+
+        没有新 bar 时也调用它：持仓的浮动盈亏要跟着最新价动，
+        否则界面上的浮盈会冻在上一次成交的价位上。
+        """
+        if not self.bars:
+            return
+        bar = self.bars[max(0, self.cursor - 1)]
+        if self.position:
+            self.unrealized_pnl = round(
+                (bar["close"] - self.cfg["slippage"] - self.position["entryPrice"])
+                * self.cfg["multiplier"] * self.cfg["qty"] - self.cfg["feePerSide"] * self.cfg["qty"] * 2, 2)
+        self.equity = round(self.cash + self.unrealized_pnl, 2)
+        self.peak_equity = max(self.peak_equity, self.equity)
+        if self.peak_equity > 0:
+            self.max_drawdown_pct = max(
+                self.max_drawdown_pct, (self.peak_equity - self.equity) / self.peak_equity * 100)
+
+    def trim(self, keep: int = 1200) -> int:
+        """丢掉最老的一批 bar，把内存占用和落库体积压住。
+
+        常驻交易是只增不减的：1 分钟线一天 400 根，跑一个月上万根，
+        每次 feed 都要全量重算指标、每 30 秒还要把整个 bars 写进 SQLite。
+        不裁的话越跑越慢。
+
+        裁的时候必须把**所有指向 bar 的索引一起减掉偏移量** —— 持仓的开仓位置、
+        每笔成交的进出场下标、权益曲线的点位，少改一处就会错位。
+
+        近似说明：截断后 EMA/ATR 的前若干根会因为预热不足而不准，
+        所以 keep 取 1200 根（1 分钟线约 20 个交易小时），影响只落在最老的那一小段。
+        """
+        if len(self.bars) <= keep * 2:
+            return 0
+        drop = len(self.bars) - keep
+        if drop <= 0:
+            return 0
+        self.bars = self.bars[drop:]
+        self.cursor = max(0, self.cursor - drop)
+        if self.position:
+            self.position["entryIdx"] = max(0, self.position["entryIdx"] - drop)
+        for trade in self.trades:
+            trade["entryIdx"] = max(0, trade["entryIdx"] - drop)
+            trade["exitIdx"] = max(0, trade["exitIdx"] - drop)
+        self.equity_curve = [{"timestamp": point["timestamp"], "equity": point["equity"],
+                              "i": max(0, point["i"] - drop)} for point in self.equity_curve]
+        self._recalc_series()
+        return drop
 
     # -- 内部 --------------------------------------------------------------
     def _evaluate(self, sig: int) -> tuple[bool, bool, list[str]]:
@@ -294,8 +441,12 @@ class TradingSession:
             rsi_value = self.series["rsi"][sig]
             if rsi_value is None or rsi_value >= cfg["rsiUpper"]:
                 blockers.append(f"RSI ≥ {cfg['rsiUpper']:g}（超买）")
-        if cfg["useBlackout"] and (bars[sig]["event_blackout"] or self.bars[self.cursor]["event_blackout"]):
-            blockers.append("事件禁入 bar")
+        if cfg["useBlackout"]:
+            # 用 .get 而不是下标：连续交易模式下行情来自分钟线接口，
+            # 那边没有"事件禁入"这个概念，bar 上根本不存在这个键。
+            tail = self.bars[min(self.cursor, len(self.bars) - 1)]
+            if bars[sig].get("event_blackout") or tail.get("event_blackout"):
+                blockers.append("事件禁入 bar")
         if cfg["dailyLossLimit"] > 0:
             day = bars[sig]["timestamp"][:10]
             if self.daily_pnl.get(day, 0.0) <= -cfg["dailyLossLimit"]:
@@ -308,7 +459,7 @@ class TradingSession:
         self.position = {"side": "LONG", "qty": cfg["qty"], "entryIdx": i,
                          "entryTime": bar["timestamp"], "entryPrice": price,
                          "reason": f"{cfg['maType']}({cfg['fast']}) 上穿 ({cfg['slow']}) 且过滤器通过"}
-        self._log_signal(bar["timestamp"], "entry", "均线金叉通过过滤")
+        self._log_signal(bar["timestamp"], "entry", "均线金叉通过过滤", price)
 
     def _close(self, i: int, reason: str, raw_price: float) -> None:
         cfg, bar, pos = self.cfg, self.bars[i], self.position
@@ -332,7 +483,7 @@ class TradingSession:
         })
         self.position = None
         self.unrealized_pnl = 0.0
-        self._log_signal(bar["timestamp"], "exit", reason)
+        self._log_signal(bar["timestamp"], "exit", reason, price)
 
     def _mark(self, bar: dict, index: int) -> None:
         cfg = self.cfg
@@ -351,8 +502,11 @@ class TradingSession:
         if self.curve_limit and len(self.equity_curve) > self.curve_limit * 2:
             self.equity_curve = self.equity_curve[-self.curve_limit:]
 
-    def _log_signal(self, timestamp: str, kind: str, reason: str) -> None:
-        self.signals.append({"timestamp": timestamp, "type": kind, "reason": reason})
+    def _log_signal(self, timestamp: str, kind: str, reason: str,
+                    price: float | None = None) -> None:
+        """记一条信号。带上成交/触发价，否则复盘只能看到"什么时候"，看不到"什么价位"。"""
+        self.signals.append({"timestamp": timestamp, "type": kind, "reason": reason,
+                             "price": round(price, 6) if isinstance(price, (int, float)) else None})
         if len(self.signals) > 1000:
             self.signals = self.signals[-500:]
 
