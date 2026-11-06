@@ -4,6 +4,22 @@
 
 不接券商、不发真实委托。交易页提供「模拟盘 / 实盘」切换：模拟盘是**按区间一次跑完的策略模拟**（行情可以是服务端合成的演示数据，也可以接本机 CTP 采集的真实分钟 K 线）；实盘页签目前只展示接入前置条件，不连接任何柜台，也不会发出委托。
 
+## 界面
+
+| 总览仪表盘 | 我的策略库 |
+|---|---|
+| ![总览仪表盘](docs/screenshots/overview.png) | ![我的策略库](docs/screenshots/strategy.png) |
+
+| 交易（区间模拟盘） | 策略回测 |
+|---|---|
+| ![交易](docs/screenshots/paper.png) | ![策略回测](docs/screenshots/backtest.png) |
+
+| 品种诊断 | 交易清单 |
+|---|---|
+| ![品种诊断](docs/screenshots/diagnostics.png) | ![交易清单](docs/screenshots/trades.png) |
+
+> 截图取自本地 `http://127.0.0.1:8765`，数据为本机模拟账本；交易与回测页未跑区间时显示空状态，跑完即出权益曲线、买卖点与逐笔盈亏。
+
 ---
 
 ## 快速开始

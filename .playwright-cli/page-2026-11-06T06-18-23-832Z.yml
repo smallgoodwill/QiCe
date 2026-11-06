@@ -1,0 +1,264 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 策
+      - generic [ref=e6]: 期策 · 模拟工作台
+    - generic [ref=e7]: 工作空间
+    - navigation [ref=e8]:
+      - button "▦ 总览仪表盘" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ▦
+        - generic [ref=e11]: 总览仪表盘
+      - button "⌘ 我的策略库" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ⌘
+        - generic [ref=e14]: 我的策略库
+      - button "▶ 交易" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ▶
+        - generic [ref=e17]: 交易
+      - button "⌁ 实时 K 线" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⌁
+        - generic [ref=e20]: 实时 K 线
+      - button "◷ 策略回测" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: ◷
+        - generic [ref=e23]: 策略回测
+      - button "◈ 品种诊断" [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]: ◈
+        - generic [ref=e26]: 品种诊断
+      - button "≋ 交易清单" [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: ≋
+        - generic [ref=e29]: 交易清单
+      - button "▤ 每日诊断" [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: ▤
+        - generic [ref=e32]: 每日诊断
+      - button "✳ 智能问答" [ref=e33] [cursor=pointer]:
+        - generic [ref=e34]: ✳
+        - generic [ref=e35]: 智能问答
+    - generic [ref=e36]:
+      - generic [ref=e37]: 仅本地模拟运行
+      - text: 教学演示 · 数据非实时
+  - main [ref=e39]:
+    - generic [ref=e40]:
+      - generic [ref=e41]: 工作台 / 交易
+      - generic [ref=e42]:
+        - generic [ref=e43]: ● PAPER TRADING
+        - generic [ref=e44]: 数据来源：本地服务端
+        - generic [ref=e45]: 研
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]: ⚠
+        - generic [ref=e49]:
+          - strong [ref=e50]: 纸面模拟环境
+          - text: 回测按所选时间区间拉取公开真实历史行情（主力连续），模拟盘使用按交易时段合成的演示数据或本机 CTP 采集落库的分钟 K 线；不接券商柜台、不发真实委托。结果只描述所选区间的历史表现，不代表未来收益。
+      - text: ⌕
+      - generic [ref=e268]:
+        - generic [ref=e269]:
+          - generic [ref=e270]:
+            - heading "策略模拟盘" [level=1] [ref=e271]
+            - paragraph [ref=e272]: 选一条策略和一段时间，一次跑完：买卖点、逐笔盈亏、每笔持仓时长都在这一页看完。
+          - generic [ref=e273]:
+            - generic [ref=e274]: 服务已连接
+            - tablist "交易模式" [ref=e275]:
+              - tab "模拟盘" [selected] [ref=e276] [cursor=pointer]
+              - tab "实盘" [ref=e278] [cursor=pointer]
+        - generic [ref=e280]:
+          - generic [ref=e281]:
+            - generic [ref=e282]:
+              - generic [ref=e283]:
+                - heading "模拟设置" [level=2] [ref=e284]
+                - generic [ref=e285]: 一次算完，不用等
+              - generic [ref=e286]:
+                - generic [ref=e287]: 策略
+                - combobox [ref=e288]:
+                  - option "内置均线策略（EMA 9 / 21）" [selected]
+                  - option "黄金 · 黄金 · AU"
+                  - option "石油 · 原油 · SC"
+                  - option "E2E 冒烟策略 · IF2503"
+                - generic [ref=e289]: 内置策略：EMA(9) 上穿 EMA(21) 做多，ATR 过滤开启，RSI 关闭。
+              - generic [ref=e290]:
+                - generic [ref=e291]: 行情来源
+                - generic [ref=e292]:
+                  - button "演示行情 可用" [ref=e293] [cursor=pointer]:
+                    - text: 演示行情
+                    - generic [ref=e294]: 可用
+                  - button "真实采集 可用" [ref=e295] [cursor=pointer]:
+                    - text: 真实采集
+                    - generic [ref=e296]: 可用
+                - generic [ref=e297]: 本机从 CTP 采集并落库的分钟 K 线，只能覆盖开始采集之后的时间。 可用合约：au2612（247 根）
+                - generic [ref=e298]:
+                  - generic [ref=e299]: 交易品种
+                  - generic [ref=e300]:
+                    - combobox "板块" [ref=e301]:
+                      - option "金融"
+                      - option "黑色" [selected]
+                      - option "有色"
+                      - option "贵金属"
+                      - option "能化"
+                      - option "农产品"
+                      - option "航运"
+                      - option "新能源"
+                    - combobox "品种" [ref=e302]:
+                      - option "螺纹钢 · RB" [selected]
+                      - option "热卷 · HC"
+                      - option "不锈钢 · SS"
+                      - option "铁矿石 · I"
+                      - option "焦炭 · J"
+                      - option "焦煤 · JM"
+                      - option "硅铁 · SF"
+                      - option "锰硅 · SM"
+                    - combobox "合约" [ref=e303]:
+                      - option "IF2612 · 21 根（不足）" [selected]
+                      - option "au2612 · 247 根"
+                  - generic [ref=e304]: 真实采集只能选已经攒够数据的合约；根数不足时跑不出成交。
+              - generic [ref=e305]:
+                - generic [ref=e306]: 时间段
+                - generic [ref=e307]:
+                  - button "最近 1 个交易日" [ref=e308] [cursor=pointer]
+                  - button "最近 3 个" [ref=e309] [cursor=pointer]
+                  - button "最近 5 个" [ref=e310] [cursor=pointer]
+                  - button "最近 10 个" [ref=e311] [cursor=pointer]
+                - generic [ref=e312]:
+                  - textbox [ref=e313]: 2026-11-04
+                  - generic [ref=e314]: 至
+                  - textbox [ref=e315]: 2026-11-06
+                - generic [ref=e316]: 2026-11-04 至 2026-11-06 · 3 个交易日 · 约 720 根 1 分钟 bar
+              - group [ref=e317]:
+                - generic "合约与成本参数" [ref=e318] [cursor=pointer]
+              - generic [ref=e319]:
+                - button "▶ 开始模拟" [ref=e320] [cursor=pointer]
+                - generic [ref=e321]: 最多 20 个交易日
+            - generic [ref=e322]:
+              - generic [ref=e323]:
+                - generic [ref=e324]:
+                  - generic [ref=e325]: 净盈亏
+                  - generic [ref=e326]: —
+                  - generic [ref=e327]: 已扣双边费用与滑点
+                - generic [ref=e328]:
+                  - generic [ref=e329]: 收益率
+                  - generic [ref=e330]: —
+                  - generic [ref=e331]: 相对初始资金
+                - generic [ref=e332]:
+                  - generic [ref=e333]: 胜率
+                  - generic [ref=e334]: —
+                  - generic [ref=e335]: 已平仓交易
+                - generic [ref=e336]:
+                  - generic [ref=e337]: 盈亏因子
+                  - generic [ref=e338]: —
+                  - generic [ref=e339]: 盈利总额 / 亏损总额
+                - generic [ref=e340]:
+                  - generic [ref=e341]: 最大回撤
+                  - generic [ref=e342]: —
+                  - generic [ref=e343]: 逐 bar 权益估算
+                - generic [ref=e344]:
+                  - generic [ref=e345]: 交易笔数
+                  - generic [ref=e346]: —
+                  - generic [ref=e347]: 手续费合计 —
+              - generic [ref=e348]:
+                - generic [ref=e349]:
+                  - generic [ref=e350]:
+                    - heading "K 线 + 买卖点" [level=2] [ref=e351]
+                    - generic [ref=e352]: 还没有结果 · 左侧设置好点「开始模拟」
+                  - generic [ref=e353]:
+                    - generic [ref=e354]:
+                      - button "全部" [ref=e355] [cursor=pointer]
+                      - button "近 1 日" [ref=e356] [cursor=pointer]
+                      - button "近 1 小时" [ref=e357] [cursor=pointer]
+                    - button "交易点：隐藏" [ref=e358] [cursor=pointer]
+                - generic [ref=e361]:
+                  - generic [ref=e362]: 买卖点会画在这里
+                  - generic [ref=e363]: 红色为买入开仓，绿色为卖出平仓，鼠标悬停看成交价与时间
+                - generic [ref=e364]: 交易点默认隐藏，保持走势干净；点下方「逐笔明细」任意一行即可在图上定位该笔。
+          - generic [ref=e365]:
+            - generic [ref=e366]:
+              - generic [ref=e367]:
+                - heading "权益曲线" [level=2] [ref=e368]
+                - generic [ref=e369]: 策略权益与买入持有基准对照
+              - generic [ref=e370]:
+                - generic [ref=e371]: 策略
+                - generic [ref=e373]: 基准
+            - generic [ref=e375]: 运行模拟后显示
+          - generic [ref=e377]:
+            - generic [ref=e378]:
+              - generic [ref=e379]:
+                - heading "逐笔成交明细" [level=2] [ref=e380]
+                - generic [ref=e381]: 开仓、平仓、持仓时长与每笔盈亏
+              - generic [ref=e382]:
+                - generic [ref=e383]: 0 笔
+                - button "导出 CSV" [ref=e384] [cursor=pointer]
+            - table [ref=e386]:
+              - rowgroup [ref=e387]:
+                - row [ref=e388]:
+                  - columnheader "#" [ref=e389]
+                  - columnheader "方向" [ref=e390]
+                  - columnheader "开仓时间 / 价" [ref=e391]
+                  - columnheader "平仓时间 / 价" [ref=e392]
+                  - columnheader "持仓" [ref=e393]
+                  - columnheader "手数" [ref=e394]
+                  - columnheader "毛盈亏" [ref=e395]
+                  - columnheader "费用" [ref=e396]
+                  - columnheader "净盈亏" [ref=e397]
+                  - columnheader "收益率" [ref=e398]
+                  - columnheader "浮盈 / 浮亏" [ref=e399]
+                  - columnheader "退出原因" [ref=e400]
+              - rowgroup [ref=e401]:
+                - row [ref=e402]:
+                  - cell "运行模拟后显示逐笔成交" [ref=e403]
+          - generic [ref=e404]:
+            - generic [ref=e405]:
+              - generic [ref=e406]:
+                - heading "按交易日盈亏" [level=2] [ref=e407]
+                - generic [ref=e408]: —
+              - table [ref=e410]:
+                - rowgroup [ref=e411]:
+                  - row [ref=e412]:
+                    - columnheader "交易日" [ref=e413]
+                    - columnheader "成交" [ref=e414]
+                    - columnheader "胜 / 负" [ref=e415]
+                    - columnheader "手续费" [ref=e416]
+                    - columnheader "当日盈亏" [ref=e417]
+                    - columnheader "累计" [ref=e418]
+                    - columnheader "日终权益" [ref=e419]
+                - rowgroup [ref=e420]:
+                  - row [ref=e421]:
+                    - cell "运行模拟后显示" [ref=e422]
+            - generic [ref=e423]:
+              - generic [ref=e424]:
+                - heading "历史模拟记录" [level=2] [ref=e425]
+                - generic [ref=e426]: 12 条
+              - generic [ref=e427]:
+                - button "石油 · rb2701 2026-10-29 → 2026-11-04 · 19 笔 +¥ 726" [ref=e428] [cursor=pointer]:
+                  - generic [ref=e429]: 石油 · rb27012026-10-29 → 2026-11-04 · 19 笔
+                  - generic [ref=e430]: +¥ 726
+                - button "石油 · rb2701 2026-10-22 → 2026-11-04 · 39 笔 +¥ 726" [ref=e431] [cursor=pointer]:
+                  - generic [ref=e432]: 石油 · rb27012026-10-22 → 2026-11-04 · 39 笔
+                  - generic [ref=e433]: +¥ 726
+                - button "石油 · rb2701 2026-10-22 → 2026-11-04 · 39 笔 +¥ 726" [ref=e434] [cursor=pointer]:
+                  - generic [ref=e435]: 石油 · rb27012026-10-22 → 2026-11-04 · 39 笔
+                  - generic [ref=e436]: +¥ 726
+                - button "默认均线策略（EMA 9/21） · IF2612 2026-10-26 → 2026-10-29 · 11 笔 +¥ 78" [ref=e437] [cursor=pointer]:
+                  - generic [ref=e438]: 默认均线策略（EMA 9/21） · IF26122026-10-26 → 2026-10-29 · 11 笔
+                  - generic [ref=e439]: +¥ 78
+                - button "默认均线策略（EMA 9/21） · IF2612 2026-11-02 → 2026-11-04 · 10 笔 +¥ 65" [ref=e440] [cursor=pointer]:
+                  - generic [ref=e441]: 默认均线策略（EMA 9/21） · IF26122026-11-02 → 2026-11-04 · 10 笔
+                  - generic [ref=e442]: +¥ 65
+                - button "默认均线策略（EMA 9/21） · IF2612 2026-10-26 → 2026-10-29 · 11 笔 +¥ 78" [ref=e443] [cursor=pointer]:
+                  - generic [ref=e444]: 默认均线策略（EMA 9/21） · IF26122026-10-26 → 2026-10-29 · 11 笔
+                  - generic [ref=e445]: +¥ 78
+                - button "石油 · rb2701 2026-11-02 → 2026-11-04 · 11 笔 −¥ 6" [ref=e446] [cursor=pointer]:
+                  - generic [ref=e447]: 石油 · rb27012026-11-02 → 2026-11-04 · 11 笔
+                  - generic [ref=e448]: −¥ 6
+                - button "石油 · rb2701 2026-11-04 → 2026-11-04 · 5 笔 −¥ 320" [ref=e449] [cursor=pointer]:
+                  - generic [ref=e450]: 石油 · rb27012026-11-04 → 2026-11-04 · 5 笔
+                  - generic [ref=e451]: −¥ 320
+                - button "石油 · rb2701 2026-10-22 → 2026-11-04 · 39 笔 +¥ 726" [ref=e452] [cursor=pointer]:
+                  - generic [ref=e453]: 石油 · rb27012026-10-22 → 2026-11-04 · 39 笔
+                  - generic [ref=e454]: +¥ 726
+                - button "石油 · rb2701 2026-10-29 → 2026-11-04 · 19 笔 +¥ 726" [ref=e455] [cursor=pointer]:
+                  - generic [ref=e456]: 石油 · rb27012026-10-29 → 2026-11-04 · 19 笔
+                  - generic [ref=e457]: +¥ 726
+                - button "石油 · rb2701 2026-10-22 → 2026-11-04 · 39 笔 +¥ 726" [ref=e458] [cursor=pointer]:
+                  - generic [ref=e459]: 石油 · rb27012026-10-22 → 2026-11-04 · 39 笔
+                  - generic [ref=e460]: +¥ 726
+                - button "石油 · rb2701 2026-10-29 → 2026-11-04 · 19 笔 +¥ 726" [ref=e461] [cursor=pointer]:
+                  - generic [ref=e462]: 石油 · rb27012026-10-29 → 2026-11-04 · 19 笔
+                  - generic [ref=e463]: +¥ 726
+              - generic [ref=e464]: 成本口径：信号在 bar 收盘确认，下一根开盘价加减滑点成交，手续费按每边每手计。
+      - text: ▸ ✓ ✓ ✓ ✕ ✕

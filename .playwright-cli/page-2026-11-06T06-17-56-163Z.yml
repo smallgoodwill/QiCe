@@ -1,0 +1,141 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 策
+      - generic [ref=e6]: 期策 · 模拟工作台
+    - generic [ref=e7]: 工作空间
+    - navigation [ref=e8]:
+      - button "▦ 总览仪表盘" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ▦
+        - generic [ref=e11]: 总览仪表盘
+      - button "⌘ 我的策略库" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ⌘
+        - generic [ref=e14]: 我的策略库
+      - button "▶ 交易" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ▶
+        - generic [ref=e17]: 交易
+      - button "⌁ 实时 K 线" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⌁
+        - generic [ref=e20]: 实时 K 线
+      - button "◷ 策略回测" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: ◷
+        - generic [ref=e23]: 策略回测
+      - button "◈ 品种诊断" [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]: ◈
+        - generic [ref=e26]: 品种诊断
+      - button "≋ 交易清单" [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: ≋
+        - generic [ref=e29]: 交易清单
+      - button "▤ 每日诊断" [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: ▤
+        - generic [ref=e32]: 每日诊断
+      - button "✳ 智能问答" [ref=e33] [cursor=pointer]:
+        - generic [ref=e34]: ✳
+        - generic [ref=e35]: 智能问答
+    - generic [ref=e36]:
+      - generic [ref=e37]: 仅本地模拟运行
+      - text: 教学演示 · 数据非实时
+  - main [ref=e39]:
+    - generic [ref=e40]:
+      - generic [ref=e41]: 工作台 / 总览仪表盘
+      - generic [ref=e42]:
+        - generic [ref=e43]: ● PAPER TRADING
+        - generic [ref=e44]: 数据来源：本地服务端
+        - generic [ref=e45]: 研
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]: ⚠
+        - generic [ref=e49]:
+          - strong [ref=e50]: 纸面模拟环境
+          - text: 回测按所选时间区间拉取公开真实历史行情（主力连续），模拟盘使用按交易时段合成的演示数据或本机 CTP 采集落库的分钟 K 线；不接券商柜台、不发真实委托。结果只描述所选区间的历史表现，不代表未来收益。
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e54]:
+            - heading "工作台" [level=1] [ref=e55]
+            - paragraph [ref=e56]: 账户和策略统计仅从本地服务保存的回测/模拟盘记录读取。
+          - button "刷新" [ref=e57] [cursor=pointer]
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - generic [ref=e60]: 策略库
+            - generic [ref=e61]: —
+            - generic [ref=e62]: 已保存策略
+          - generic [ref=e63]:
+            - generic [ref=e64]: 模拟权益
+            - generic [ref=e65]: —
+            - generic [ref=e66]: 尚无模拟盘
+          - generic [ref=e67]:
+            - generic [ref=e68]: 模拟盘已实现盈亏
+            - generic [ref=e69]: —
+            - generic [ref=e70]: 不含未平仓浮动盈亏
+          - generic [ref=e71]:
+            - generic [ref=e72]: 最近回测
+            - generic [ref=e73]: —
+            - generic [ref=e74]: 尚无回测记录
+        - generic [ref=e75]:
+          - generic [ref=e76]:
+            - generic [ref=e77]:
+              - heading "实时 K 线" [level=2] [ref=e78]
+              - generic [ref=e79]: 未接入行情
+            - generic [ref=e80]:
+              - combobox "板块" [ref=e81]:
+                - option "金融"
+                - option "黑色" [selected]
+                - option "有色"
+                - option "贵金属"
+                - option "能化"
+                - option "农产品"
+                - option "航运"
+                - option "新能源"
+              - combobox "品种" [ref=e82]:
+                - option "螺纹钢" [selected]
+                - option "热卷"
+                - option "不锈钢"
+                - option "铁矿石"
+                - option "焦炭"
+                - option "焦煤"
+                - option "硅铁"
+                - option "锰硅"
+              - combobox "周期" [ref=e83]:
+                - option "1 分钟" [selected]
+                - option "5 分钟"
+                - option "15 分钟"
+                - option "30 分钟"
+                - option "60 分钟"
+                - option "4 小时"
+                - option "12 小时"
+                - option "1 天"
+                - option "1 周"
+              - generic [ref=e84]: 未启动
+              - button "打开完整图表" [ref=e85] [cursor=pointer]
+          - generic [ref=e88]:
+            - generic [ref=e89]: 正在读取行情
+            - generic [ref=e90]: 选中品种后自动加载 K 线
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - generic [ref=e94]:
+              - heading "模拟盘权益曲线" [level=2] [ref=e95]
+              - generic [ref=e96]: 暂无模拟盘数据
+            - generic [ref=e97]: 在「交易」页跑一次模拟后显示权益。
+          - generic [ref=e99]:
+            - generic [ref=e100]:
+              - heading "运行概况" [level=2] [ref=e101]
+              - generic [ref=e102]: 无运行记录
+            - generic [ref=e103]: 当前没有模拟盘。
+            - generic [ref=e105]: 统计来自最近一次区间模拟。账户权益为模拟账户值，不代表真实账户。
+        - generic [ref=e106]:
+          - generic [ref=e107]:
+            - heading "最近模拟成交" [level=2] [ref=e108]
+            - button "打开模拟盘" [ref=e109] [cursor=pointer]
+          - table [ref=e111]:
+            - rowgroup [ref=e112]:
+              - row [ref=e113]:
+                - columnheader "模拟 ID" [ref=e114]
+                - columnheader "品种" [ref=e115]
+                - columnheader "方向" [ref=e116]
+                - columnheader "开仓时间" [ref=e117]
+                - columnheader "平仓时间" [ref=e118]
+                - columnheader "净盈亏" [ref=e119]
+            - rowgroup [ref=e120]:
+              - row [ref=e121]:
+                - cell "暂无成交" [ref=e122]
+      - text: ⌕ ▸ ✓ ✓ ✓ ✕ ✕

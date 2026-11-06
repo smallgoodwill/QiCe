@@ -1,0 +1,104 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 策
+      - generic [ref=e6]: 期策 · 模拟工作台
+    - generic [ref=e7]: 工作空间
+    - navigation [ref=e8]:
+      - button "▦ 总览仪表盘" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ▦
+        - generic [ref=e11]: 总览仪表盘
+      - button "⌘ 我的策略库" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ⌘
+        - generic [ref=e14]: 我的策略库
+      - button "▶ 交易" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ▶
+        - generic [ref=e17]: 交易
+      - button "⌁ 实时 K 线" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⌁
+        - generic [ref=e20]: 实时 K 线
+      - button "◷ 策略回测" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: ◷
+        - generic [ref=e23]: 策略回测
+      - button "◈ 品种诊断" [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]: ◈
+        - generic [ref=e26]: 品种诊断
+      - button "≋ 交易清单" [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: ≋
+        - generic [ref=e29]: 交易清单
+      - button "▤ 每日诊断" [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: ▤
+        - generic [ref=e32]: 每日诊断
+      - button "✳ 智能问答" [ref=e33] [cursor=pointer]:
+        - generic [ref=e34]: ✳
+        - generic [ref=e35]: 智能问答
+    - generic [ref=e36]:
+      - generic [ref=e37]: 仅本地模拟运行
+      - text: 教学演示 · 数据非实时
+  - main [ref=e39]:
+    - generic [ref=e40]:
+      - generic [ref=e41]: 工作台 / 品种诊断
+      - generic [ref=e42]:
+        - generic [ref=e43]: ● PAPER TRADING
+        - generic [ref=e44]: 数据来源：本地服务端
+        - generic [ref=e45]: 研
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]: ⚠
+        - generic [ref=e49]:
+          - strong [ref=e50]: 纸面模拟环境
+          - text: 回测按所选时间区间拉取公开真实历史行情（主力连续），模拟盘使用按交易时段合成的演示数据或本机 CTP 采集落库的分钟 K 线；不接券商柜台、不发真实委托。结果只描述所选区间的历史表现，不代表未来收益。
+      - text: ⌕
+      - generic [ref=e667]:
+        - generic [ref=e668]:
+          - generic [ref=e669]:
+            - heading "品种诊断" [level=1] [ref=e670]
+            - paragraph [ref=e671]: 以消息面与情绪为主线：VIX 恐慌指数、跨市场避险、品种快讯、财经事件与资金行为； 技术面只作交叉校验，收在下方速览里。
+          - generic [ref=e672]: 待选择品种
+        - generic [ref=e673]:
+          - generic [ref=e674]: ⓘ
+          - generic [ref=e675]: 消息面来自公开第三方接口，可能延迟或缺失； 情绪温度是本地按公开公式加权的复合代理指标（不是 CBOE VIX），快讯倾向由关键词词典判定。 全部内容不构成品种推荐或买卖建议。
+        - generic [ref=e676]:
+          - generic [ref=e677]:
+            - generic [ref=e678]:
+              - heading "诊断对象" [level=2] [ref=e679]
+              - generic [ref=e680]: 品类与品种都支持搜索：代码、中文名、板块、交易所（精准匹配置顶）
+            - generic [ref=e681]: —
+          - generic [ref=e683]:
+            - generic [ref=e684]:
+              - generic [ref=e685]: 交易品类
+              - textbox "交易品类" [ref=e687]:
+                - /placeholder: 搜索品类，如 黑色 / nh
+                - text: 全部品类
+              - generic [ref=e688]: 8 个品类 · 67 个品种
+            - generic [ref=e689]:
+              - generic [ref=e690]: 交易品种
+              - textbox "交易品种" [ref=e692]:
+                - /placeholder: 搜索代码 / 中文名，如 rb、螺纹
+              - generic [ref=e693]: 还没选品种，保存时会拦下来
+            - generic [ref=e694]:
+              - generic [ref=e695]: K 线周期
+              - combobox "K 线周期" [ref=e696]:
+                - option "1 分钟（约 3 个交易日）" [selected]
+                - option "5 分钟"
+                - option "15 分钟"
+                - option "60 分钟"
+              - generic [ref=e697]: 只影响折叠的技术面速览
+            - generic [ref=e698]:
+              - generic [ref=e699]: AI 诊断范围
+              - combobox "AI 诊断范围" [ref=e700]:
+                - option "消息面 + 技术面（默认）" [selected]
+                - option "只看消息面与情绪"
+                - option "只看技术面"
+              - generic [ref=e701]: 默认让模型把消息、恐慌指数与资金串成叙事
+          - generic [ref=e702]:
+            - button "✳ AI 诊断" [ref=e703] [cursor=pointer]
+            - button "算技术面" [ref=e704] [cursor=pointer]
+            - button "↻ 刷新线索" [ref=e705] [cursor=pointer]
+            - generic [ref=e706]: 选好品种后自动加载消息面线索
+        - generic [ref=e707]: 选择品种后，这里会显示 VIX 恐慌指数、跨市场避险、相关快讯、财经事件与情绪温度。
+        - group [ref=e709]:
+          - generic "▸ 技术面速览 均线 / ADX / ATR / 量能 / 关键位置 · 默认收起" [ref=e710] [cursor=pointer]:
+            - text: ▸ 技术面速览
+            - generic [ref=e711]: 均线 / ADX / ATR / 量能 / 关键位置 · 默认收起
+      - text: ✓ ✓ ✓ ✕ ✕
