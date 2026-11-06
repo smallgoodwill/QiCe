@@ -31,3 +31,6 @@ replay_output/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ---- 自动化工具产物 --------------------------------------------------------
+.playwright-cli/
